@@ -83,9 +83,9 @@ WantedBy=timers.target
 		}
 
 		// Recarregar e habilitar
-		exec.Command("systemctl", "--user", "daemon-reload").Run()
-		exec.Command("systemctl", "--user", "enable", fmt.Sprintf("nazim-%s.timer", svc.Name)).Run()
-		exec.Command("systemctl", "--user", "start", fmt.Sprintf("nazim-%s.timer", svc.Name)).Run()
+		_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
+		_ = exec.Command("systemctl", "--user", "enable", fmt.Sprintf("nazim-%s.timer", svc.Name)).Run()
+		_ = exec.Command("systemctl", "--user", "start", fmt.Sprintf("nazim-%s.timer", svc.Name)).Run()
 	} else if svc.OnStartup && svc.GetInterval() == 0 {
 		content.WriteString("[Install]\n")
 		content.WriteString("WantedBy=default.target\n")
@@ -94,8 +94,8 @@ WantedBy=timers.target
 			return fmt.Errorf("failed to write service file: %w", err)
 		}
 
-		exec.Command("systemctl", "--user", "daemon-reload").Run()
-		exec.Command("systemctl", "--user", "enable", fmt.Sprintf("nazim-%s.service", svc.Name)).Run()
+		_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
+		_ = exec.Command("systemctl", "--user", "enable", fmt.Sprintf("nazim-%s.service", svc.Name)).Run()
 	}
 
 	return nil
@@ -103,15 +103,15 @@ WantedBy=timers.target
 
 // Uninstall removes a service from Linux.
 func (m *LinuxManager) Uninstall(name string) error {
-	exec.Command("systemctl", "--user", "stop", fmt.Sprintf("nazim-%s.timer", name)).Run()
-	exec.Command("systemctl", "--user", "disable", fmt.Sprintf("nazim-%s.timer", name)).Run()
-	exec.Command("systemctl", "--user", "stop", fmt.Sprintf("nazim-%s.service", name)).Run()
-	exec.Command("systemctl", "--user", "disable", fmt.Sprintf("nazim-%s.service", name)).Run()
+	_ = exec.Command("systemctl", "--user", "stop", fmt.Sprintf("nazim-%s.timer", name)).Run()
+	_ = exec.Command("systemctl", "--user", "disable", fmt.Sprintf("nazim-%s.timer", name)).Run()
+	_ = exec.Command("systemctl", "--user", "stop", fmt.Sprintf("nazim-%s.service", name)).Run()
+	_ = exec.Command("systemctl", "--user", "disable", fmt.Sprintf("nazim-%s.service", name)).Run()
 
 	userSystemdDir := filepath.Join(os.Getenv("HOME"), ".config", "systemd", "user")
-	os.Remove(filepath.Join(userSystemdDir, fmt.Sprintf("nazim-%s.service", name)))
-	os.Remove(filepath.Join(userSystemdDir, fmt.Sprintf("nazim-%s.timer", name)))
-	exec.Command("systemctl", "--user", "daemon-reload").Run()
+	_ = os.Remove(filepath.Join(userSystemdDir, fmt.Sprintf("nazim-%s.service", name)))
+	_ = os.Remove(filepath.Join(userSystemdDir, fmt.Sprintf("nazim-%s.timer", name)))
+	_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
 
 	return nil
 }

@@ -72,7 +72,9 @@ func (m *DarwinManager) Install(svc *service.Service) error {
 
 	// Criar diretório de logs se não existir
 	logDir := filepath.Join(os.Getenv("HOME"), ".nazim", "logs")
-	os.MkdirAll(logDir, 0755)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("failed to create log directory: %w", err)
+	}
 
 	if err := os.WriteFile(plistFile, []byte(content.String()), 0644); err != nil {
 		return fmt.Errorf("failed to write plist file: %w", err)
@@ -82,7 +84,7 @@ func (m *DarwinManager) Install(svc *service.Service) error {
 	cmd := exec.Command("launchctl", "load", plistFile)
 	if err := cmd.Run(); err != nil {
 		// Tentar unload primeiro se já existir
-		exec.Command("launchctl", "unload", plistFile).Run()
+		_ = exec.Command("launchctl", "unload", plistFile).Run()
 		cmd = exec.Command("launchctl", "load", plistFile)
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to load service: %w", err)
@@ -97,7 +99,7 @@ func (m *DarwinManager) Uninstall(name string) error {
 	plistFile := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", name))
 
 	// Descarregar primeiro
-	exec.Command("launchctl", "unload", plistFile).Run()
+	_ = exec.Command("launchctl", "unload", plistFile).Run()
 
 	// Remover arquivo
 	if err := os.Remove(plistFile); err != nil && !os.IsNotExist(err) {

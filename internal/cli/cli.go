@@ -94,13 +94,13 @@ func (c *CLI) Add(ctx context.Context, flags *Flags, verbose bool) error {
 	platformMgr, err := platform.NewManager()
 	if err != nil {
 		// Remove from config if install fails
-		c.cfg.RemoveService(flags.Name)
+		_ = c.cfg.RemoveService(flags.Name)
 		return fmt.Errorf("failed to create platform manager: %w", err)
 	}
 
 	if err := platformMgr.Install(svc); err != nil {
 		// Remove from config if install fails
-		c.cfg.RemoveService(flags.Name)
+		_ = c.cfg.RemoveService(flags.Name)
 		return fmt.Errorf("failed to install service: %w", err)
 	}
 

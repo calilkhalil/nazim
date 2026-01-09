@@ -20,7 +20,7 @@ func NewWindowsManager() *WindowsManager {
 // Install installs a service on Windows using schtasks.
 func (m *WindowsManager) Install(svc *service.Service) error {
 	// Primeiro, remover se já existir
-	m.Uninstall(svc.Name)
+	_ = m.Uninstall(svc.Name)
 
 	// Construir o comando
 	cmdParts := []string{svc.Command}
