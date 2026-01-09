@@ -264,4 +264,3 @@ Interval Format:
 Config: ~/.config/nazim/services.yaml (or equivalent on Windows/macOS)
 `)
 }
-

@@ -144,4 +144,3 @@ func formatSystemdDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%dh", int(d.Hours()))
 }
-

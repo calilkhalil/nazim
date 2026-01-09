@@ -125,4 +125,3 @@ func (m *WindowsManager) IsInstalled(name string) (bool, error) {
 	err := cmd.Run()
 	return err == nil, nil
 }
-

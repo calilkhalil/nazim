@@ -51,7 +51,7 @@ func formatDuration(d time.Duration) string {
 
 func parseDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
-	
+
 	var multiplier time.Duration
 	switch {
 	case strings.HasSuffix(s, "s"):
@@ -118,4 +118,3 @@ func (s *Service) GetInterval() time.Duration {
 func (s *Service) RequiresStartup() bool {
 	return s.OnStartup
 }
-

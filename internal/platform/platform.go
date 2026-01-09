@@ -30,4 +30,3 @@ func NewManager() (Manager, error) {
 		return nil, fmt.Errorf("unsupported OS: %s", runtime.GOOS)
 	}
 }
-

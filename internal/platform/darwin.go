@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"nazim/internal/service"
 )
@@ -39,7 +38,7 @@ func (m *DarwinManager) Install(svc *service.Service) error {
 	content.WriteString(fmt.Sprintf("  <key>Label</key>\n  <string>com.nazim.%s</string>\n", svc.Name))
 	content.WriteString("  <key>ProgramArguments</key>\n")
 	content.WriteString("  <array>\n")
-	
+
 	// Dividir comando e argumentos
 	parts := strings.Fields(svc.Command)
 	for _, part := range parts {
@@ -96,10 +95,10 @@ func (m *DarwinManager) Install(svc *service.Service) error {
 // Uninstall removes a service from macOS.
 func (m *DarwinManager) Uninstall(name string) error {
 	plistFile := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", name))
-	
+
 	// Descarregar primeiro
 	exec.Command("launchctl", "unload", plistFile).Run()
-	
+
 	// Remover arquivo
 	if err := os.Remove(plistFile); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove plist file: %w", err)
@@ -139,4 +138,3 @@ func (m *DarwinManager) IsInstalled(name string) (bool, error) {
 	_, err := os.Stat(plistFile)
 	return err == nil, nil
 }
-

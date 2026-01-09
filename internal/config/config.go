@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"nazim/internal/service"
 	"gopkg.in/yaml.v3"
+	"nazim/internal/service"
 )
 
 const (
@@ -28,8 +28,8 @@ func New() (*Config, error) {
 	configDir := xdgPath("XDG_CONFIG_HOME", getDefaultConfigDir())
 
 	cfg := &Config{
-		ConfigDir:  filepath.Join(configDir, AppName),
-		services:   make(map[string]*service.Service),
+		ConfigDir: filepath.Join(configDir, AppName),
+		services:  make(map[string]*service.Service),
 	}
 
 	cfg.ConfigFile = filepath.Join(cfg.ConfigDir, "services.yaml")
