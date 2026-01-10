@@ -287,7 +287,7 @@ func (m *WindowsManager) IsInstalled(name string) (bool, error) {
 	   strings.Contains(outputStr, "not found") {
 		// Try without spaces
 		cmd = exec.Command("schtasks", "/query", "/tn", taskNameNoSpace)
-		output2, err2 := cmd.CombinedOutput()
+		_, err2 := cmd.CombinedOutput()
 		if err2 == nil {
 			return true, nil
 		}
