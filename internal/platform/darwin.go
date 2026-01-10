@@ -19,6 +19,17 @@ func NewDarwinManager() *DarwinManager {
 	return &DarwinManager{}
 }
 
+// escapeXML escapes special XML characters in a string.
+// Note: & must be escaped first to avoid double-escaping.
+func escapeXML(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "\"", "&quot;")
+	s = strings.ReplaceAll(s, "'", "&apos;")
+	return s
+}
+
 // Install installs a service on macOS using launchd.
 func (m *DarwinManager) Install(svc *service.Service) error {
 	// Criar diretório LaunchAgents se não existir
