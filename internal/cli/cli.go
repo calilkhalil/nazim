@@ -99,6 +99,9 @@ func (c *CLI) Add(ctx context.Context, flags *Flags, verbose bool) error {
 	}
 
 	if err := platformMgr.Install(svc); err != nil {
+		if strings.Contains(err.Error(), "elevation requested") {
+			return err
+		}
 		_ = c.cfg.RemoveService(flags.Name)
 		return fmt.Errorf("failed to install service: %w", err)
 	}
