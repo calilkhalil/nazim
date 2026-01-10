@@ -13,17 +13,21 @@
 
 Managing system services across different operating systems is boring. Each platform has its own mechanism:
 - **Windows**: Task Scheduler
-- **Linux**: systemd (or cron)
+- **Linux**: systemd
 - **macOS**: launchd
 
 **nazim simplifies this.** It provides a unified CLI to manage services across all platforms. Write your service once, and nazim handles the platform-specific installation automatically.
 
-```
-┌─────────────┐     ┌─────────────┐     ┌──────────────────┐
-│ Your Script │────▶│    nazim    │────▶│ Platform Service │
-│  or Command │     │   add ...   │     │  (systemd/cron/  │
-│             │     │             │     │  launchd/schtasks)│
-└─────────────┘     └─────────────┘     └──────────────────┘
+```mermaid
+flowchart LR
+    A[Your Script<br/>or Command] -->|nazim add| B[nazim]
+    B -->|detects platform| C{Platform}
+    C -->|Linux| D[systemd]
+    C -->|macOS| E[launchd]
+    C -->|Windows| F[Task Scheduler]
+    D --> G[Service Installed]
+    E --> G
+    F --> G
 ```
 
 ## Features
