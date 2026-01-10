@@ -52,31 +52,54 @@ func requestElevation() error {
 	for _, arg := range args {
 		// Escape quotes and wrap in quotes if needed
 		escaped := strings.ReplaceAll(arg, `"`, `""`)
-		if strings.Contains(escaped, " ") {
+		if strings.Contains(escaped, " ") || strings.Contains(escaped, `"`) {
 			escaped = `"` + escaped + `"`
 		}
 		escapedArgs = append(escapedArgs, escaped)
 	}
 	argStr := strings.Join(escapedArgs, " ")
 
-	// Use PowerShell to request elevation
-	// This will show a UAC prompt
+	// Use PowerShell to request elevation with explicit UAC prompt
+	// The -Verb RunAs will trigger UAC prompt
+	// We need to properly escape the arguments for PowerShell
 	psCmd := fmt.Sprintf(
-		`$proc = Start-Process -FilePath "%s" -ArgumentList %s -Verb RunAs -PassThru -Wait; exit $proc.ExitCode`,
+		`$exe = "%s"; $args = %s; try {
+			$proc = Start-Process -FilePath $exe -ArgumentList $args -Verb RunAs -PassThru -Wait
+			if ($proc) {
+				exit $proc.ExitCode
+			} else {
+				exit 1
+			}
+		} catch {
+			Write-Error "Elevation failed: $_"
+			exit 1
+		}`,
 		exe, argStr,
 	)
 
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", psCmd)
+	// Run PowerShell - this will show UAC prompt
+	// Using -WindowStyle Normal to ensure UAC prompt is visible
+	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Normal", "-Command", psCmd)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
+	// Run and wait for completion
+	// If user cancels UAC, this will return an error
 	if err := cmd.Run(); err != nil {
+		// Check if it's a cancellation (user denied UAC)
+		if exitError, ok := err.(*exec.ExitError); ok {
+			exitCode := exitError.ExitCode()
+			if exitCode == 1 || exitCode == 1223 {
+				// 1223 is ERROR_CANCELLED in Windows
+				return fmt.Errorf("elevation was cancelled - please approve the UAC prompt to continue")
+			}
+		}
 		return fmt.Errorf("failed to elevate privileges: %w", err)
 	}
 
-	// If elevation was successful, exit this process
-	// The elevated process will continue
+	// If we get here, the elevated process completed successfully
+	// Exit this non-elevated process
 	os.Exit(0)
 	return nil
 }
@@ -96,8 +119,8 @@ func checkAdminOrElevate() error {
 func (m *WindowsManager) Install(svc *service.Service) error {
 	// Check for admin privileges or request elevation
 	if !isAdmin() {
-		fmt.Fprintf(os.Stderr, "Administrator privileges required for installing services.\n")
-		fmt.Fprintf(os.Stderr, "Requesting elevation (UAC prompt will appear)...\n")
+		fmt.Fprintf(os.Stderr, "\n[!] Administrator privileges required for installing services.\n")
+		fmt.Fprintf(os.Stderr, "[!] Requesting elevation (UAC prompt will appear)...\n\n")
 		if err := requestElevation(); err != nil {
 			return fmt.Errorf("administrator privileges required to install services. Please run as administrator or approve the UAC prompt: %w", err)
 		}

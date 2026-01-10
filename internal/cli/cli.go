@@ -455,14 +455,29 @@ exit 0
 
 // createWindowsTemplate creates a template for Windows systems.
 func createWindowsTemplate(serviceName string) string {
+	// Get current user
+	username := os.Getenv("USERNAME")
+	if username == "" {
+		username = os.Getenv("USER")
+	}
+	if username == "" {
+		username = "unknown"
+	}
+
+	// Get local and UTC time
+	now := time.Now()
+	localTime := now.Format("2006-01-02 15:04:05 MST")
+	utcTime := now.UTC().Format("2006-01-02 15:04:05 UTC")
+
 	return fmt.Sprintf(`@echo off
 REM Service: %s
-REM Created: %s
+REM Created: %s (Local) / %s (UTC)
+REM Created by: %s
 
 REM Your code here:
 
 exit /b 0
-`, serviceName, time.Now().Format("2006-01-02 15:04:05"))
+`, serviceName, localTime, utcTime, username)
 }
 
 // openNotepadWithMonitoring opens Notepad and monitors the file, closing Notepad when saved.
