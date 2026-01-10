@@ -82,7 +82,7 @@ func requestElevation() error {
 		}
 	}
 
-	var showCmd int32 = 1
+	var showCmd int32 = 0
 
 	err = windows.ShellExecute(0, verbPtr, exePtr, argPtr, cwdPtr, showCmd)
 	if err != nil {
@@ -94,7 +94,6 @@ func requestElevation() error {
 		return fmt.Errorf("failed to elevate privileges: %w", err)
 	}
 
-	os.Exit(0)
 	return nil
 }
 
@@ -111,17 +110,13 @@ func checkAdminOrElevate() error {
 // Install installs a service on Windows using schtasks.
 func (m *WindowsManager) Install(svc *service.Service) error {
 	if !isAdmin() {
-		fmt.Fprintf(os.Stderr, "\n[!] Administrator privileges required for installing services.\n")
-		fmt.Fprintf(os.Stderr, "[!] Requesting elevation (UAC prompt will appear)...\n")
-		fmt.Fprintf(os.Stderr, "[!] If UAC prompt does not appear, please run the command as administrator.\n\n")
-
 		if err := requestElevation(); err != nil {
 			if strings.Contains(err.Error(), "cancelled") || strings.Contains(err.Error(), "denied") {
 				return fmt.Errorf("UAC prompt was cancelled or denied. Please approve the UAC prompt to install the service")
 			}
 			return fmt.Errorf("failed to request elevation: %w\nHint: Try running the command as administrator manually", err)
 		}
-		return fmt.Errorf("elevation requested - please run the command again after approving UAC")
+		return nil
 	}
 
 	if err := m.Uninstall(svc.Name); err != nil {
