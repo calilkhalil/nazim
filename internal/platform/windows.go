@@ -267,19 +267,34 @@ func (m *WindowsManager) Stop(name string) error {
 
 // IsInstalled checks if a service is installed.
 func (m *WindowsManager) IsInstalled(name string) (bool, error) {
-	taskName := fmt.Sprintf("Nazim_%s", name)
-	// Quote the task name to handle spaces correctly
-	cmd := exec.Command("schtasks", "/query", "/tn", taskName)
+	// Try both with and without spaces, as Task Scheduler may normalize names
+	taskNameWithSpace := fmt.Sprintf("Nazim_%s", name)
+	// Remove spaces for alternative check (Task Scheduler sometimes removes them)
+	taskNameNoSpace := fmt.Sprintf("Nazim_%s", strings.ReplaceAll(name, " ", ""))
+	
+	// First try with the original name (with spaces)
+	cmd := exec.Command("schtasks", "/query", "/tn", taskNameWithSpace)
 	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Check if the error is because the task doesn't exist
-		outputStr := strings.ToLower(string(output))
-		if strings.Contains(outputStr, "does not exist") || 
-		   strings.Contains(outputStr, "cannot find") {
-			return false, nil
+	if err == nil {
+		// Task found with original name
+		return true, nil
+	}
+	
+	// If not found, try without spaces (Task Scheduler may have normalized it)
+	outputStr := strings.ToLower(string(output))
+	if strings.Contains(outputStr, "does not exist") || 
+	   strings.Contains(outputStr, "cannot find") ||
+	   strings.Contains(outputStr, "not found") {
+		// Try without spaces
+		cmd = exec.Command("schtasks", "/query", "/tn", taskNameNoSpace)
+		output2, err2 := cmd.CombinedOutput()
+		if err2 == nil {
+			return true, nil
 		}
-		// Other errors (like permission issues) return false with error
+		// Neither version found
 		return false, nil
 	}
-	return true, nil
+	
+	// Other errors (like permission issues)
+	return false, nil
 }
