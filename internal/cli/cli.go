@@ -135,10 +135,13 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 	fmt.Println("----\t-------\t----\t------")
 
 	for _, svc := range services {
-		installed, _ := platformMgr.IsInstalled(svc.Name)
+		installed, err := platformMgr.IsInstalled(svc.Name)
 		status := "Not Installed"
 		if installed {
 			status = "Installed"
+		} else if err != nil {
+			// If there's an error checking, show it (might be permission issue)
+			status = "Unknown"
 		}
 
 		svcType := ""
