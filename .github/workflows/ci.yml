@@ -30,6 +30,12 @@ jobs:
       - name: Tidy dependencies
         run: go mod tidy
 
+      - name: Show go.sum changes
+        if: failure()
+        run: |
+          echo "If go.sum is missing entries, run: go mod tidy"
+          git diff go.sum || echo "No changes to go.sum"
+
       - name: Verify dependencies
         run: go mod verify
 
