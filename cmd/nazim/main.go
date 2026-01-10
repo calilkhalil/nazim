@@ -108,6 +108,31 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// Route to appropriate command
 	switch command {
 	case "add":
+		// Handle case where name has spaces and wasn't quoted
+		// Example: nazim add --name Taureg Blue Color --command write
+		// The parser will only get "Taureg" as the name, and "Blue Color" will be in cmdArgs
+		if flags.Name != "" && len(cmdArgs) > 0 {
+			// Check if cmdArgs start with a flag
+			// If not, they're likely part of the name
+			allAreNameParts := true
+			for _, arg := range cmdArgs {
+				if strings.HasPrefix(arg, "-") {
+					allAreNameParts = false
+					break
+				}
+			}
+			if allAreNameParts {
+				// Join the name with cmdArgs
+				flags.Name = flags.Name + " " + strings.Join(cmdArgs, " ")
+				cmdArgs = nil
+			}
+		} else if flags.Name == "" && len(cmdArgs) > 0 {
+			// If name is empty but we have cmdArgs, join them as the name
+			if !strings.HasPrefix(cmdArgs[0], "-") {
+				flags.Name = strings.Join(cmdArgs, " ")
+				cmdArgs = nil
+			}
+		}
 		addFlags := &cli.Flags{
 			Name:      flags.Name,
 			Command:   flags.Command,
