@@ -1,6 +1,0 @@
-# Go Report Card configuration
-# https://github.com/gojp/goreportcard
-
-# The goreportcard service analyzes Go code
-# It should automatically detect and handle build tags
-# If issues persist, try accessing: https://goreportcard.com/report/github.com/calilkhalil/nazim
