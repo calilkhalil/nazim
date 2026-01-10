@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/calilkhalil/nazim/workflows/CI/badge.svg)](https://github.com/calilkhalil/nazim/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go Version](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/go-1.23+-blue.svg)](https://golang.org)
 [![Go Report Card](https://goreportcard.com/badge/github.com/calilkhalil/nazim)](https://goreportcard.com/report/github.com/calilkhalil/nazim)
 
 > Multi-OS service manager. Create and manage services (scripts/commands) that can be executed on system startup or at regular intervals.
@@ -38,7 +38,7 @@ flowchart LR
 - **Interactive Editor**: Use `--command write` to open your default editor and create scripts
 - **Simple CLI**: Easy-to-use command-line interface
 - **XDG Compliant**: Follows XDG Base Directory Specification for config files
-- **Zero Dependencies**: Uses only Go standard library and YAML parser
+- **Minimal Dependencies**: Uses Go standard library, YAML parser, and Windows API for UAC elevation
 
 ## Quick Start
 
