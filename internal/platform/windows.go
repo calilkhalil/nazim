@@ -137,7 +137,21 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 	normalizedNameForLog := normalizeServiceName(svc.Name)
 	logPath := filepath.Join(logDir, fmt.Sprintf("%s.log", normalizedNameForLog))
 	escapedLogPath := escapeWindowsPath(logPath)
-	commandWithLogs := fmt.Sprintf(`cmd /c "%s >> %s 2>&1"`, command, escapedLogPath)
+	
+	hasInterval := svc.GetInterval() > 0
+	hasStartup := svc.OnStartup
+	needsElevation := hasStartup || hasInterval
+	
+	var commandWithLogs string
+	if needsElevation {
+		escapedCommand := strings.ReplaceAll(command, `\`, `\\`)
+		escapedCommand = strings.ReplaceAll(escapedCommand, `"`, `\"`)
+		escapedLogPathForPS := strings.ReplaceAll(logPath, `\`, `\\`)
+		escapedLogPathForPS = strings.ReplaceAll(escapedLogPathForPS, `"`, `\"`)
+		commandWithLogs = fmt.Sprintf(`powershell -NoProfile -ExecutionPolicy Bypass -Command "$proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', '%s >> %s 2>&1' -Verb RunAs -PassThru -Wait; exit $proc.ExitCode"`, escapedCommand, escapedLogPathForPS)
+	} else {
+		commandWithLogs = fmt.Sprintf(`cmd /c "%s >> %s 2>&1"`, command, escapedLogPath)
+	}
 
 	normalizedName := normalizeServiceName(svc.Name)
 
@@ -149,12 +163,20 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 	}
 
 	if svc.WorkDir != "" {
-		wrappedCommand := fmt.Sprintf(`cmd /c "cd /d %s && %s >> %s 2>&1"`, escapeWindowsPath(svc.WorkDir), command, escapedLogPath)
-		args[3] = wrappedCommand
+		if needsElevation {
+			escapedWorkDir := strings.ReplaceAll(svc.WorkDir, `\`, `\\`)
+			escapedWorkDir = strings.ReplaceAll(escapedWorkDir, `"`, `\"`)
+			escapedCommand := strings.ReplaceAll(command, `\`, `\\`)
+			escapedCommand = strings.ReplaceAll(escapedCommand, `"`, `\"`)
+			escapedLogPathForPS := strings.ReplaceAll(logPath, `\`, `\\`)
+			escapedLogPathForPS = strings.ReplaceAll(escapedLogPathForPS, `"`, `\"`)
+			wrappedCommand := fmt.Sprintf(`powershell -NoProfile -ExecutionPolicy Bypass -Command "$proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'cd /d %s && %s >> %s 2>&1' -Verb RunAs -PassThru -Wait -WorkingDirectory '%s'; exit $proc.ExitCode"`, escapedWorkDir, escapedCommand, escapedLogPathForPS, escapedWorkDir)
+			args[3] = wrappedCommand
+		} else {
+			wrappedCommand := fmt.Sprintf(`cmd /c "cd /d %s && %s >> %s 2>&1"`, escapeWindowsPath(svc.WorkDir), command, escapedLogPath)
+			args[3] = wrappedCommand
+		}
 	}
-
-	hasInterval := svc.GetInterval() > 0
-	hasStartup := svc.OnStartup
 
 	if hasInterval {
 		minutes := int(svc.GetInterval().Minutes())
@@ -165,11 +187,9 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 			} else {
 				args = append(args, "/sc", "minute", "/mo", fmt.Sprintf("%d", minutes))
 			}
-			args = append(args, "/rl", "HIGHEST")
 		}
 	} else if hasStartup {
 		args = append(args, "/sc", "onstart")
-		args = append(args, "/rl", "HIGHEST")
 	}
 
 	cmd := exec.Command("schtasks", args...)
