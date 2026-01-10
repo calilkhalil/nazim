@@ -427,16 +427,30 @@ func getEditor() string {
 
 // createUnixTemplate creates a template for Unix-like systems (Linux/macOS).
 func createUnixTemplate(serviceName string) string {
+	// Get current user
+	username := os.Getenv("USER")
+	if username == "" {
+		username = os.Getenv("USERNAME")
+	}
+	if username == "" {
+		username = "unknown"
+	}
+
+	// Get local and UTC time
+	now := time.Now()
+	localTime := now.Format("2006-01-02 15:04:05 MST")
+	utcTime := now.UTC().Format("2006-01-02 15:04:05 UTC")
+
 	return fmt.Sprintf(`#!/bin/sh
 # ============================================================================
 # nazim Service Script
 # ============================================================================
 # Service Name: %s
-# Created: %s
+# Created: %s (Local) / %s (UTC)
+# Created by: %s
 # Location: ~/.config/nazim/scripts/%s.sh
 # 
-# This script is managed by nazim. Write your service code in the section
-# marked "YOUR CODE HERE" below.
+# This script is managed by nazim. Write your service code below.
 # ============================================================================
 
 # ============================================================================
@@ -444,13 +458,32 @@ func createUnixTemplate(serviceName string) string {
 # ============================================================================
 # Write your service logic below this line:
 
-# Example commands you can use:
-# - Run a backup: tar -czf backup.tar.gz /path/to/data
-# - Process files: find /path -name "*.log" -exec process.sh {} \;
-# - Send notifications: curl -X POST https://api.example.com/notify
-# - Clean up: rm -rf /tmp/old_files
-# - Run Python script: python3 /path/to/script.py
-# - Execute other scripts: /path/to/other-script.sh
+# Example: Run a backup
+# tar -czf /backup/data-$(date +%%Y%%m%%d).tar.gz /path/to/data
+
+# Example: Process files
+# find /path/to/logs -name "*.log" -mtime +7 -delete
+
+# Example: Send HTTP request
+# curl -X POST https://api.example.com/notify -d "message=Service ran"
+
+# Example: Run a Python script
+# python3 /path/to/script.py --option value
+
+# Example: Execute another script
+# /path/to/other-script.sh
+
+# Example: Clean up temporary files
+# rm -rf /tmp/old_files/*
+
+# Example: Set environment variables and run a program
+# export MY_VAR=value
+# /usr/local/bin/myprogram --flag
+
+# Example: Check if a service is running
+# if ! pgrep -x "myservice" > /dev/null; then
+#     echo "Service is not running"
+# fi
 
 # ============================================================================
 # END OF YOUR CODE
@@ -458,7 +491,7 @@ func createUnixTemplate(serviceName string) string {
 
 # Exit with status code (0 = success, non-zero = failure)
 exit 0
-`, serviceName, time.Now().Format("2006-01-02 15:04:05"), serviceName)
+`, serviceName, localTime, utcTime, username, serviceName)
 }
 
 // createWindowsTemplate creates a template for Windows systems.
@@ -478,14 +511,51 @@ func createWindowsTemplate(serviceName string) string {
 	utcTime := now.UTC().Format("2006-01-02 15:04:05 UTC")
 
 	return fmt.Sprintf(`@echo off
-REM Service: %s
+REM ============================================================================
+REM nazim Service Script
+REM ============================================================================
+REM Service Name: %s
 REM Created: %s (Local) / %s (UTC)
 REM Created by: %s
+REM Location: %%APPDATA%%\nazim\scripts\%s.bat
+REM 
+REM This script is managed by nazim. Write your service code below.
+REM ============================================================================
 
-REM Your code here:
+REM ============================================================================
+REM YOUR CODE HERE
+REM ============================================================================
+REM Write your service logic below this line:
 
+REM Example: Run a PowerShell command
+REM powershell -Command "Write-Host 'Hello from nazim service'"
+
+REM Example: Copy files
+REM xcopy "C:\source\*.*" "D:\backup\" /E /I /Y
+
+REM Example: Run a Python script
+REM python "C:\path\to\script.py"
+
+REM Example: Execute another batch file
+REM call "C:\path\to\other-script.bat"
+
+REM Example: Set environment variables and run a program
+REM set MY_VAR=value
+REM "C:\path\to\program.exe" --option value
+
+REM Example: Clean up temporary files
+REM del /Q "C:\temp\*.tmp" 2>nul
+
+REM Example: Send HTTP request
+REM powershell -Command "Invoke-WebRequest -Uri 'https://api.example.com/endpoint' -Method POST"
+
+REM ============================================================================
+REM END OF YOUR CODE
+REM ============================================================================
+
+REM Exit with status code (0 = success, non-zero = failure)
 exit /b 0
-`, serviceName, localTime, utcTime, username)
+`, serviceName, localTime, utcTime, username, serviceName)
 }
 
 // openNotepadWithMonitoring opens Notepad and monitors the file, closing Notepad when saved.
