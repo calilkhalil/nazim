@@ -20,7 +20,7 @@ Managing system services across different operating systems is boring. Each plat
 
 ```mermaid
 flowchart LR
-    A[Your Script<br/>or Command] -->|nazim add| B[nazim]
+    A[Script<br/>or Command] -->|nazim add| B[nazim]
     B -->|detects platform| C{Platform}
     C -->|Linux| D[systemd]
     C -->|macOS| E[launchd]
