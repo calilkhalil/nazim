@@ -1,3 +1,6 @@
+//go:build windows
+// +build windows
+
 // Package platform provides Windows-specific service management.
 package platform
 
