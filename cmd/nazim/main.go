@@ -118,12 +118,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			}
 			if allAreNameParts {
 				flags.Name = flags.Name + " " + strings.Join(cmdArgs, " ")
-				cmdArgs = nil
 			}
 		} else if flags.Name == "" && len(cmdArgs) > 0 {
 			if !strings.HasPrefix(cmdArgs[0], "-") {
 				flags.Name = strings.Join(cmdArgs, " ")
-				cmdArgs = nil
 			}
 		}
 		addFlags := &cli.Flags{
