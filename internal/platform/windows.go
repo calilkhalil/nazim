@@ -35,11 +35,7 @@ func isAdmin() bool {
 	// Use the Windows API to check if the current process token is elevated
 	// This is more reliable than trying to query tasks or open protected files
 	token := windows.GetCurrentProcessToken()
-	elevated, err := token.IsElevated()
-	if err != nil {
-		// If we can't check, assume not elevated for safety
-		return false
-	}
+	elevated := token.IsElevated()
 	
 	return elevated
 }
