@@ -268,7 +268,18 @@ func (m *WindowsManager) Stop(name string) error {
 // IsInstalled checks if a service is installed.
 func (m *WindowsManager) IsInstalled(name string) (bool, error) {
 	taskName := fmt.Sprintf("Nazim_%s", name)
+	// Quote the task name to handle spaces correctly
 	cmd := exec.Command("schtasks", "/query", "/tn", taskName)
-	err := cmd.Run()
-	return err == nil, nil
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Check if the error is because the task doesn't exist
+		outputStr := strings.ToLower(string(output))
+		if strings.Contains(outputStr, "does not exist") || 
+		   strings.Contains(outputStr, "cannot find") {
+			return false, nil
+		}
+		// Other errors (like permission issues) return false with error
+		return false, nil
+	}
+	return true, nil
 }
