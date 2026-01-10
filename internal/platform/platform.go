@@ -4,9 +4,31 @@ package platform
 import (
 	"fmt"
 	"runtime"
+	"strings"
 
 	"nazim/internal/service"
 )
+
+func normalizeServiceName(name string) string {
+	normalized := name
+
+	normalized = strings.ReplaceAll(normalized, " ", "")
+	normalized = strings.ReplaceAll(normalized, "\t", "")
+	normalized = strings.ReplaceAll(normalized, "\n", "")
+	normalized = strings.ReplaceAll(normalized, "\r", "")
+
+	normalized = strings.ReplaceAll(normalized, "\\", "")
+	normalized = strings.ReplaceAll(normalized, "/", "")
+	normalized = strings.ReplaceAll(normalized, ":", "")
+	normalized = strings.ReplaceAll(normalized, "*", "")
+	normalized = strings.ReplaceAll(normalized, "?", "")
+	normalized = strings.ReplaceAll(normalized, "\"", "")
+	normalized = strings.ReplaceAll(normalized, "<", "")
+	normalized = strings.ReplaceAll(normalized, ">", "")
+	normalized = strings.ReplaceAll(normalized, "|", "")
+	
+	return normalized
+}
 
 // Manager is an interface for managing services on different platforms.
 type Manager interface {

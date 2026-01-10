@@ -30,15 +30,19 @@ func (m *LinuxManager) Install(svc *service.Service) error {
 }
 
 func (m *LinuxManager) installSystemd(svc *service.Service) error {
-	// Criar diretório de serviços do usuário se não existir
 	userSystemdDir := filepath.Join(os.Getenv("HOME"), ".config", "systemd", "user")
 	if err := os.MkdirAll(userSystemdDir, 0755); err != nil {
 		return fmt.Errorf("failed to create systemd directory: %w", err)
 	}
 
-	serviceFile := filepath.Join(userSystemdDir, fmt.Sprintf("nazim-%s.service", svc.Name))
+	normalizedName := normalizeServiceName(svc.Name)
+	serviceFile := filepath.Join(userSystemdDir, fmt.Sprintf("nazim-%s.service", normalizedName))
 
-	// Construir conteúdo do arquivo de serviço
+	logDir := filepath.Join(os.Getenv("HOME"), ".nazim", "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("failed to create log directory: %w", err)
+	}
+
 	var content strings.Builder
 	content.WriteString("[Unit]\n")
 	content.WriteString(fmt.Sprintf("Description=Nazim Service: %s\n", svc.Name))
@@ -53,9 +57,12 @@ func (m *LinuxManager) installSystemd(svc *service.Service) error {
 	if svc.WorkDir != "" {
 		content.WriteString(fmt.Sprintf("WorkingDirectory=%s\n", svc.WorkDir))
 	}
+	normalizedNameForLog := normalizeServiceName(svc.Name)
+	logPath := filepath.Join(logDir, fmt.Sprintf("%s.log", normalizedNameForLog))
+	content.WriteString(fmt.Sprintf("StandardOutput=append:%s\n", logPath))
+	content.WriteString(fmt.Sprintf("StandardError=append:%s\n", logPath))
 	content.WriteString("\n")
 
-	// Se for agendado, criar timer
 	if svc.GetInterval() > 0 {
 		content.WriteString("[Install]\n")
 		content.WriteString("WantedBy=default.target\n")
@@ -64,8 +71,7 @@ func (m *LinuxManager) installSystemd(svc *service.Service) error {
 			return fmt.Errorf("failed to write service file: %w", err)
 		}
 
-		// Criar arquivo de timer
-		timerFile := filepath.Join(userSystemdDir, fmt.Sprintf("nazim-%s.timer", svc.Name))
+		timerFile := filepath.Join(userSystemdDir, fmt.Sprintf("nazim-%s.timer", normalizedName))
 		interval := svc.GetInterval()
 		timerContent := fmt.Sprintf(`[Unit]
 Description=Timer for Nazim Service: %s
@@ -82,14 +88,13 @@ WantedBy=timers.target
 			return fmt.Errorf("failed to write timer file: %w", err)
 		}
 
-		// Reload and enable
 		if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
 			return fmt.Errorf("failed to reload systemd daemon: %w", err)
 		}
-		if err := exec.Command("systemctl", "--user", "enable", fmt.Sprintf("nazim-%s.timer", svc.Name)).Run(); err != nil {
+		if err := exec.Command("systemctl", "--user", "enable", fmt.Sprintf("nazim-%s.timer", normalizedName)).Run(); err != nil {
 			return fmt.Errorf("failed to enable timer: %w", err)
 		}
-		if err := exec.Command("systemctl", "--user", "start", fmt.Sprintf("nazim-%s.timer", svc.Name)).Run(); err != nil {
+		if err := exec.Command("systemctl", "--user", "start", fmt.Sprintf("nazim-%s.timer", normalizedName)).Run(); err != nil {
 			return fmt.Errorf("failed to start timer: %w", err)
 		}
 	} else if svc.OnStartup && svc.GetInterval() == 0 {
@@ -103,7 +108,7 @@ WantedBy=timers.target
 		if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
 			return fmt.Errorf("failed to reload systemd daemon: %w", err)
 		}
-		if err := exec.Command("systemctl", "--user", "enable", fmt.Sprintf("nazim-%s.service", svc.Name)).Run(); err != nil {
+		if err := exec.Command("systemctl", "--user", "enable", fmt.Sprintf("nazim-%s.service", normalizedName)).Run(); err != nil {
 			return fmt.Errorf("failed to enable service: %w", err)
 		}
 	}
@@ -113,20 +118,20 @@ WantedBy=timers.target
 
 // Uninstall removes a service from Linux.
 func (m *LinuxManager) Uninstall(name string) error {
-	// Stop and disable timer (ignore errors if not exists)
-	_ = exec.Command("systemctl", "--user", "stop", fmt.Sprintf("nazim-%s.timer", name)).Run()
-	_ = exec.Command("systemctl", "--user", "disable", fmt.Sprintf("nazim-%s.timer", name)).Run()
-	
-	// Stop and disable service (ignore errors if not exists)
-	_ = exec.Command("systemctl", "--user", "stop", fmt.Sprintf("nazim-%s.service", name)).Run()
-	_ = exec.Command("systemctl", "--user", "disable", fmt.Sprintf("nazim-%s.service", name)).Run()
+	normalizedName := normalizeServiceName(name)
+	serviceName := fmt.Sprintf("nazim-%s", normalizedName)
+	timerName := fmt.Sprintf("nazim-%s.timer", normalizedName)
 
-	// Remove files
+	_ = exec.Command("systemctl", "--user", "stop", timerName).Run()
+	_ = exec.Command("systemctl", "--user", "disable", timerName).Run()
+
+	_ = exec.Command("systemctl", "--user", "stop", fmt.Sprintf("%s.service", serviceName)).Run()
+	_ = exec.Command("systemctl", "--user", "disable", fmt.Sprintf("%s.service", serviceName)).Run()
+
 	userSystemdDir := filepath.Join(os.Getenv("HOME"), ".config", "systemd", "user")
-	_ = os.Remove(filepath.Join(userSystemdDir, fmt.Sprintf("nazim-%s.service", name)))
-	_ = os.Remove(filepath.Join(userSystemdDir, fmt.Sprintf("nazim-%s.timer", name)))
-	
-	// Reload daemon (important after file removal)
+	_ = os.Remove(filepath.Join(userSystemdDir, fmt.Sprintf("%s.service", serviceName)))
+	_ = os.Remove(filepath.Join(userSystemdDir, timerName))
+
 	if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
 		return fmt.Errorf("failed to reload systemd daemon: %w", err)
 	}
@@ -136,19 +141,34 @@ func (m *LinuxManager) Uninstall(name string) error {
 
 // Start starts a service on Linux.
 func (m *LinuxManager) Start(name string) error {
-	cmd := exec.Command("systemctl", "--user", "start", fmt.Sprintf("nazim-%s.service", name))
-	return cmd.Run()
+	normalizedName := normalizeServiceName(name)
+	serviceName := fmt.Sprintf("nazim-%s.service", normalizedName)
+
+	cmd := exec.Command("systemctl", "--user", "start", serviceName)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to start service: %w", err)
+	}
+	return nil
 }
 
 // Stop stops a service on Linux.
 func (m *LinuxManager) Stop(name string) error {
-	cmd := exec.Command("systemctl", "--user", "stop", fmt.Sprintf("nazim-%s.service", name))
-	return cmd.Run()
+	normalizedName := normalizeServiceName(name)
+	serviceName := fmt.Sprintf("nazim-%s.service", normalizedName)
+
+	cmd := exec.Command("systemctl", "--user", "stop", serviceName)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to stop service: %w", err)
+	}
+	return nil
 }
 
 // IsInstalled checks if a service is installed.
 func (m *LinuxManager) IsInstalled(name string) (bool, error) {
-	cmd := exec.Command("systemctl", "--user", "is-enabled", fmt.Sprintf("nazim-%s.service", name))
+	normalizedName := normalizeServiceName(name)
+	serviceName := fmt.Sprintf("nazim-%s.service", normalizedName)
+
+	cmd := exec.Command("systemctl", "--user", "is-enabled", serviceName)
 	err := cmd.Run()
 	return err == nil, nil
 }

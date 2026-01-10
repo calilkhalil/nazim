@@ -141,6 +141,20 @@ func (c *Config) RemoveService(name string) error {
 	return c.Save()
 }
 
+// UpdateService updates an existing service.
+func (c *Config) UpdateService(svc *service.Service) error {
+	if err := svc.Validate(); err != nil {
+		return err
+	}
+
+	if _, exists := c.services[svc.Name]; !exists {
+		return fmt.Errorf("service %s does not exist", svc.Name)
+	}
+
+	c.services[svc.Name] = svc
+	return c.Save()
+}
+
 // GetService returns a service by name.
 func (c *Config) GetService(name string) (*service.Service, error) {
 	svc, exists := c.services[name]

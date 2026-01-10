@@ -19,8 +19,6 @@ func NewDarwinManager() *DarwinManager {
 	return &DarwinManager{}
 }
 
-// escapeXML escapes special XML characters in a string.
-// Note: & must be escaped first to avoid double-escaping.
 func escapeXML(s string) string {
 	s = strings.ReplaceAll(s, "&", "&amp;")
 	s = strings.ReplaceAll(s, "<", "&lt;")
@@ -32,30 +30,26 @@ func escapeXML(s string) string {
 
 // Install installs a service on macOS using launchd.
 func (m *DarwinManager) Install(svc *service.Service) error {
-	// Criar diretório LaunchAgents se não existir
 	launchAgentsDir := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents")
 	if err := os.MkdirAll(launchAgentsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create LaunchAgents directory: %w", err)
 	}
 
-	plistFile := filepath.Join(launchAgentsDir, fmt.Sprintf("com.nazim.%s.plist", svc.Name))
+	normalizedName := normalizeServiceName(svc.Name)
+	plistFile := filepath.Join(launchAgentsDir, fmt.Sprintf("com.nazim.%s.plist", normalizedName))
 
-	// Construir conteúdo do plist
 	var content strings.Builder
 	content.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
 	content.WriteString("<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n")
 	content.WriteString("<plist version=\"1.0\">\n")
 	content.WriteString("<dict>\n")
-	content.WriteString(fmt.Sprintf("  <key>Label</key>\n  <string>com.nazim.%s</string>\n", svc.Name))
+	content.WriteString(fmt.Sprintf("  <key>Label</key>\n  <string>com.nazim.%s</string>\n", normalizedName))
 	content.WriteString("  <key>ProgramArguments</key>\n")
 	content.WriteString("  <array>\n")
 
-	// Command is already separated from args, don't split it
-	// Escape XML special characters in command
 	escapedCmd := escapeXML(svc.Command)
 	content.WriteString(fmt.Sprintf("    <string>%s</string>\n", escapedCmd))
-	
-	// Add args (already separated)
+
 	for _, arg := range svc.Args {
 		escapedArg := escapeXML(arg)
 		content.WriteString(fmt.Sprintf("    <string>%s</string>\n", escapedArg))
@@ -76,15 +70,15 @@ func (m *DarwinManager) Install(svc *service.Service) error {
 		content.WriteString(fmt.Sprintf("  <integer>%d</integer>\n", int(svc.GetInterval().Seconds())))
 	}
 
+	normalizedNameForLog := normalizeServiceName(svc.Name)
 	content.WriteString("  <key>StandardOutPath</key>\n")
-	content.WriteString(fmt.Sprintf("  <string>%s</string>\n", filepath.Join(os.Getenv("HOME"), ".nazim", "logs", fmt.Sprintf("%s.out", svc.Name))))
+	content.WriteString(fmt.Sprintf("  <string>%s</string>\n", filepath.Join(os.Getenv("HOME"), ".nazim", "logs", fmt.Sprintf("%s.out", normalizedNameForLog))))
 	content.WriteString("  <key>StandardErrorPath</key>\n")
-	content.WriteString(fmt.Sprintf("  <string>%s</string>\n", filepath.Join(os.Getenv("HOME"), ".nazim", "logs", fmt.Sprintf("%s.err", svc.Name))))
+	content.WriteString(fmt.Sprintf("  <string>%s</string>\n", filepath.Join(os.Getenv("HOME"), ".nazim", "logs", fmt.Sprintf("%s.err", normalizedNameForLog))))
 
 	content.WriteString("</dict>\n")
 	content.WriteString("</plist>\n")
 
-	// Criar diretório de logs se não existir
 	logDir := filepath.Join(os.Getenv("HOME"), ".nazim", "logs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
@@ -94,10 +88,8 @@ func (m *DarwinManager) Install(svc *service.Service) error {
 		return fmt.Errorf("failed to write plist file: %w", err)
 	}
 
-	// Carregar o serviço
 	cmd := exec.Command("launchctl", "load", plistFile)
 	if err := cmd.Run(); err != nil {
-		// Tentar unload primeiro se já existir
 		_ = exec.Command("launchctl", "unload", plistFile).Run()
 		cmd = exec.Command("launchctl", "load", plistFile)
 		if err := cmd.Run(); err != nil {
@@ -110,12 +102,11 @@ func (m *DarwinManager) Install(svc *service.Service) error {
 
 // Uninstall removes a service from macOS.
 func (m *DarwinManager) Uninstall(name string) error {
-	plistFile := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", name))
+	normalizedName := normalizeServiceName(name)
+	plistFile := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
 
-	// Descarregar primeiro
 	_ = exec.Command("launchctl", "unload", plistFile).Run()
 
-	// Remover arquivo
 	if err := os.Remove(plistFile); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove plist file: %w", err)
 	}
@@ -125,7 +116,9 @@ func (m *DarwinManager) Uninstall(name string) error {
 
 // Start starts a service on macOS.
 func (m *DarwinManager) Start(name string) error {
-	label := fmt.Sprintf("com.nazim.%s", name)
+	normalizedName := normalizeServiceName(name)
+	label := fmt.Sprintf("com.nazim.%s", normalizedName)
+
 	cmd := exec.Command("launchctl", "start", label)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -136,21 +129,27 @@ func (m *DarwinManager) Start(name string) error {
 
 // Stop stops a service on macOS.
 func (m *DarwinManager) Stop(name string) error {
-	label := fmt.Sprintf("com.nazim.%s", name)
+	// Use normalized name (spaces removed) for consistency
+	normalizedName := normalizeServiceName(name)
+	label := fmt.Sprintf("com.nazim.%s", normalizedName)
+
 	cmd := exec.Command("launchctl", "stop", label)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Ignorar se não estiver rodando
-		if !strings.Contains(string(output), "Could not find service") {
-			return fmt.Errorf("failed to stop service: %s: %w", string(output), err)
-		}
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			outputStr := strings.ToLower(string(output))
+			if strings.Contains(outputStr, "could not find service") {
+				return nil
+			}
+		return fmt.Errorf("failed to stop service: %s: %w", string(output), err)
 	}
 	return nil
 }
 
 // IsInstalled checks if a service is installed.
 func (m *DarwinManager) IsInstalled(name string) (bool, error) {
-	plistFile := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", name))
+	normalizedName := normalizeServiceName(name)
+	plistFile := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
+
 	_, err := os.Stat(plistFile)
 	return err == nil, nil
 }

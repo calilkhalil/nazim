@@ -39,7 +39,6 @@ type Flags struct {
 
 // Add adds a new service.
 func (c *CLI) Add(ctx context.Context, flags *Flags, verbose bool) error {
-	// Validate required fields early
 	if flags.Name == "" {
 		return fmt.Errorf("service name is required (use --name or -n)")
 	}
@@ -47,7 +46,6 @@ func (c *CLI) Add(ctx context.Context, flags *Flags, verbose bool) error {
 		return fmt.Errorf("service command is required (use --command or -c, or 'write'/'edit' for interactive mode)")
 	}
 
-	// Check if command is "write" or "edit" - open interactive editor
 	command := flags.Command
 	if command == "write" || command == "edit" {
 		scriptPath, err := c.createScriptInteractive(flags.Name, verbose)
@@ -57,7 +55,6 @@ func (c *CLI) Add(ctx context.Context, flags *Flags, verbose bool) error {
 		command = scriptPath
 	}
 
-	// Parse interval
 	var intervalDuration time.Duration
 	if flags.Interval != "" {
 		var err error
@@ -67,13 +64,11 @@ func (c *CLI) Add(ctx context.Context, flags *Flags, verbose bool) error {
 		}
 	}
 
-	// Parse args
 	var args []string
 	if flags.Args != "" {
 		args = strings.Fields(flags.Args)
 	}
 
-	// Create service
 	svc := &service.Service{
 		Name:      flags.Name,
 		Command:   command,
@@ -85,12 +80,10 @@ func (c *CLI) Add(ctx context.Context, flags *Flags, verbose bool) error {
 		Platform:  runtime.GOOS,
 	}
 
-	// Validate
 	if err := svc.Validate(); err != nil {
 		return err
 	}
 
-	// Add to config
 	if err := c.cfg.AddService(svc); err != nil {
 		return fmt.Errorf("failed to add service: %w", err)
 	}
@@ -99,16 +92,13 @@ func (c *CLI) Add(ctx context.Context, flags *Flags, verbose bool) error {
 		fmt.Printf("Service '%s' added to configuration.\n", flags.Name)
 	}
 
-	// Install on system
 	platformMgr, err := platform.NewManager()
 	if err != nil {
-		// Remove from config if install fails
 		_ = c.cfg.RemoveService(flags.Name)
 		return fmt.Errorf("failed to create platform manager: %w", err)
 	}
 
 	if err := platformMgr.Install(svc); err != nil {
-		// Remove from config if install fails
 		_ = c.cfg.RemoveService(flags.Name)
 		return fmt.Errorf("failed to install service: %w", err)
 	}
@@ -130,7 +120,6 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 		return fmt.Errorf("failed to create platform manager: %w", err)
 	}
 
-	// Prepare data for table
 	type rowData struct {
 		name    string
 		command string
@@ -145,7 +134,6 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 		if installed {
 			status = "Installed"
 		} else if err != nil {
-			// If there's an error checking, show it (might be permission issue)
 			status = "Unknown"
 		}
 
@@ -176,7 +164,6 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 		})
 	}
 
-	// Truncate long commands for display (keep first 50 chars)
 	const maxCmdDisplay = 50
 	for i := range rows {
 		if len(rows[i].command) > maxCmdDisplay {
@@ -184,11 +171,10 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 		}
 	}
 
-	// Calculate column widths
-	maxNameLen := 4 // "NAME"
-	maxCmdLen := 7  // "COMMAND"
-	maxTypeLen := 4 // "TYPE"
-	maxStatusLen := 6 // "STATUS"
+	maxNameLen := 4
+	maxCmdLen := 7
+	maxTypeLen := 4
+	maxStatusLen := 6
 
 	for _, row := range rows {
 		if len(row.name) > maxNameLen {
@@ -205,7 +191,6 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 		}
 	}
 
-	// Print table header
 	headerSeparator := strings.Repeat("-", maxNameLen+maxCmdLen+maxTypeLen+maxStatusLen+13)
 	fmt.Println(headerSeparator)
 	fmt.Printf("| %-*s | %-*s | %-*s | %-*s |\n",
@@ -215,7 +200,6 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 		maxStatusLen, "STATUS")
 	fmt.Println(headerSeparator)
 
-	// Print table rows
 	for _, row := range rows {
 		fmt.Printf("| %-*s | %-*s | %-*s | %-*s |\n",
 			maxNameLen, row.name,
@@ -232,25 +216,20 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 
 // Remove removes a service completely (from system, config, and scripts).
 func (c *CLI) Remove(ctx context.Context, name string, verbose bool) error {
-	// Check if exists and get service info
 	svc, err := c.cfg.GetService(name)
 	if err != nil {
 		return fmt.Errorf("service '%s' does not exist", name)
 	}
 
-	// Uninstall from system
 	platformMgr, err := platform.NewManager()
 	if err != nil {
 		return fmt.Errorf("failed to create platform manager: %w", err)
 	}
 
 	if err := platformMgr.Uninstall(name); err != nil {
-		// Always show error, not just in verbose mode
 		fmt.Fprintf(os.Stderr, "Warning: failed to uninstall service from system: %v\n", err)
-		// Continue to remove from config anyway
 	}
 
-	// Remove script file if it exists (created by write/edit command)
 	scriptsDir := c.cfg.GetScriptsDir()
 	var ext string
 	switch runtime.GOOS {
@@ -262,8 +241,7 @@ func (c *CLI) Remove(ctx context.Context, name string, verbose bool) error {
 		ext = ".sh"
 	}
 	scriptPath := filepath.Join(scriptsDir, fmt.Sprintf("%s%s", name, ext))
-	
-	// Check if the service command points to this script (created by write/edit)
+
 	if svc.Command == scriptPath || strings.HasSuffix(svc.Command, scriptPath) {
 		if err := os.Remove(scriptPath); err != nil && !os.IsNotExist(err) {
 			if verbose {
@@ -272,7 +250,6 @@ func (c *CLI) Remove(ctx context.Context, name string, verbose bool) error {
 		}
 	}
 
-	// Remove from config
 	if err := c.cfg.RemoveService(name); err != nil {
 		return fmt.Errorf("failed to remove service: %w", err)
 	}
@@ -319,7 +296,207 @@ func (c *CLI) Stop(ctx context.Context, name string, verbose bool) error {
 	return nil
 }
 
-// parseDuration parses a duration string (e.g., "5m", "1h", "30s").
+// Status shows detailed information about a service.
+func (c *CLI) Status(ctx context.Context, name string, verbose bool) error {
+	svc, err := c.cfg.GetService(name)
+	if err != nil {
+		return fmt.Errorf("service '%s' does not exist", name)
+	}
+
+	platformMgr, err := platform.NewManager()
+	if err != nil {
+		return fmt.Errorf("failed to create platform manager: %w", err)
+	}
+
+	installed, err := platformMgr.IsInstalled(name)
+	status := "Not Installed"
+	if installed {
+		status = "Installed"
+	} else if err != nil {
+		status = "Unknown"
+	}
+
+	fmt.Printf("Service: %s\n", svc.Name)
+	fmt.Printf("Status: %s\n", status)
+	fmt.Printf("Enabled: %v\n", svc.Enabled)
+	fmt.Printf("Command: %s", svc.Command)
+	if len(svc.Args) > 0 {
+		fmt.Printf(" %s", strings.Join(svc.Args, " "))
+	}
+	fmt.Println()
+	if svc.WorkDir != "" {
+		fmt.Printf("Working Directory: %s\n", svc.WorkDir)
+	}
+	fmt.Printf("Platform: %s\n", svc.Platform)
+	
+	svcType := ""
+	if svc.OnStartup {
+		svcType = "Startup"
+	}
+	if svc.GetInterval() > 0 {
+		if svcType != "" {
+			svcType += " + "
+		}
+		svcType += fmt.Sprintf("Every %s", formatDuration(svc.GetInterval()))
+	}
+	if svcType == "" {
+		svcType = "None"
+	}
+	fmt.Printf("Schedule: %s\n", svcType)
+
+	return nil
+}
+
+// Edit updates an existing service.
+func (c *CLI) Edit(ctx context.Context, name string, flags *Flags, verbose bool) error {
+	existingSvc, err := c.cfg.GetService(name)
+	if err != nil {
+		return fmt.Errorf("service '%s' does not exist", name)
+	}
+
+	var intervalDuration time.Duration
+	if flags.Interval != "" {
+		var err error
+		intervalDuration, err = parseDuration(flags.Interval)
+		if err != nil {
+			return fmt.Errorf("invalid interval format: %w", err)
+		}
+	} else {
+		intervalDuration = existingSvc.GetInterval()
+	}
+
+	var args []string
+	if flags.Args != "" {
+		args = strings.Fields(flags.Args)
+	} else {
+		args = existingSvc.Args
+	}
+
+	updatedSvc := &service.Service{
+		Name:      name,
+		Command:   existingSvc.Command,
+		Args:      existingSvc.Args,
+		WorkDir:   existingSvc.WorkDir,
+		OnStartup: existingSvc.OnStartup,
+		Interval:  existingSvc.Interval,
+		Enabled:   existingSvc.Enabled,
+		Platform:  existingSvc.Platform,
+	}
+
+	if flags.Command != "" {
+		updatedSvc.Command = flags.Command
+	}
+	if flags.Args != "" {
+		updatedSvc.Args = args
+	}
+	if flags.WorkDir != "" {
+		updatedSvc.WorkDir = flags.WorkDir
+	}
+	if flags.Interval != "" {
+		updatedSvc.Interval = service.Duration{Duration: intervalDuration}
+	}
+
+	if flags.OnStartup {
+		updatedSvc.OnStartup = true
+		updatedSvc.Interval = service.Duration{Duration: 0}
+	} else if flags.Interval != "" {
+		updatedSvc.OnStartup = false
+	}
+
+	if err := updatedSvc.Validate(); err != nil {
+		return err
+	}
+
+	if err := c.cfg.UpdateService(updatedSvc); err != nil {
+		return fmt.Errorf("failed to update service: %w", err)
+	}
+
+	if verbose {
+		fmt.Printf("Service '%s' updated in configuration.\n", name)
+	}
+
+	platformMgr, err := platform.NewManager()
+	if err != nil {
+		return fmt.Errorf("failed to create platform manager: %w", err)
+	}
+
+	if err := platformMgr.Uninstall(name); err != nil {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to uninstall old service: %v\n", err)
+		}
+	}
+
+	if err := platformMgr.Install(updatedSvc); err != nil {
+		return fmt.Errorf("failed to reinstall service: %w", err)
+	}
+
+	fmt.Printf("Service '%s' updated successfully!\n", name)
+	return nil
+}
+
+
+// Enable enables a service.
+func (c *CLI) Enable(ctx context.Context, name string, verbose bool) error {
+	svc, err := c.cfg.GetService(name)
+	if err != nil {
+		return fmt.Errorf("service '%s' does not exist", name)
+	}
+
+	if svc.Enabled {
+		fmt.Printf("Service '%s' is already enabled.\n", name)
+		return nil
+	}
+
+	svc.Enabled = true
+	if err := c.cfg.UpdateService(svc); err != nil {
+		return fmt.Errorf("failed to enable service: %w", err)
+	}
+
+	platformMgr, err := platform.NewManager()
+	if err != nil {
+		return fmt.Errorf("failed to create platform manager: %w", err)
+	}
+
+	if err := platformMgr.Install(svc); err != nil {
+		return fmt.Errorf("failed to reinstall service: %w", err)
+	}
+
+	fmt.Printf("Service '%s' enabled successfully!\n", name)
+	return nil
+}
+
+// Disable disables a service.
+func (c *CLI) Disable(ctx context.Context, name string, verbose bool) error {
+	svc, err := c.cfg.GetService(name)
+	if err != nil {
+		return fmt.Errorf("service '%s' does not exist", name)
+	}
+
+	if !svc.Enabled {
+		fmt.Printf("Service '%s' is already disabled.\n", name)
+		return nil
+	}
+
+	svc.Enabled = false
+	if err := c.cfg.UpdateService(svc); err != nil {
+		return fmt.Errorf("failed to disable service: %w", err)
+	}
+
+	platformMgr, err := platform.NewManager()
+	if err != nil {
+		return fmt.Errorf("failed to create platform manager: %w", err)
+	}
+
+	if err := platformMgr.Uninstall(name); err != nil {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to uninstall service: %v\n", err)
+		}
+	}
+
+	fmt.Printf("Service '%s' disabled successfully!\n", name)
+	return nil
+}
+
 func parseDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	
@@ -349,8 +526,7 @@ func parseDuration(s string) (time.Duration, error) {
 	if _, err := fmt.Sscanf(s, "%d", &value); err != nil {
 		return 0, fmt.Errorf("invalid duration value: %w", err)
 	}
-	
-	// Validate value is positive
+
 	if value <= 0 {
 		return 0, fmt.Errorf("duration value must be positive, got %d", value)
 	}
@@ -358,7 +534,6 @@ func parseDuration(s string) (time.Duration, error) {
 	return time.Duration(value) * multiplier, nil
 }
 
-// formatDuration formats a duration for display.
 func formatDuration(d time.Duration) string {
 	if d < time.Minute {
 		return fmt.Sprintf("%ds", int(d.Seconds()))
@@ -372,14 +547,12 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
 }
 
-// createScriptInteractive opens the default editor to create a script.
 func (c *CLI) createScriptInteractive(serviceName string, verbose bool) (string, error) {
 	scriptsDir := c.cfg.GetScriptsDir()
 	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
 		return "", fmt.Errorf("creating scripts directory: %w", err)
 	}
 
-	// Determine script extension based on OS
 	var ext string
 	switch runtime.GOOS {
 	case "windows":
@@ -392,7 +565,6 @@ func (c *CLI) createScriptInteractive(serviceName string, verbose bool) (string,
 
 	scriptPath := filepath.Join(scriptsDir, fmt.Sprintf("%s%s", serviceName, ext))
 
-	// Get editor from environment or use defaults
 	editor := getEditor()
 
 	if verbose {
@@ -400,7 +572,6 @@ func (c *CLI) createScriptInteractive(serviceName string, verbose bool) (string,
 		fmt.Printf("Script will be saved to: %s\n", scriptPath)
 	}
 
-	// Create initial script content with template
 	var initialContent string
 	switch runtime.GOOS {
 	case "windows":
@@ -411,28 +582,22 @@ func (c *CLI) createScriptInteractive(serviceName string, verbose bool) (string,
 		initialContent = createUnixTemplate(serviceName)
 	}
 
-	// Write initial content
 	if err := os.WriteFile(scriptPath, []byte(initialContent), 0644); err != nil {
 		return "", fmt.Errorf("creating script file: %w", err)
 	}
 
-	// Make executable on Unix-like systems
 	if runtime.GOOS != "windows" {
 		if err := os.Chmod(scriptPath, 0755); err != nil {
 			return "", fmt.Errorf("making script executable: %w", err)
 		}
 	}
 
-	// Open editor with file monitoring for Windows Notepad
 	if runtime.GOOS == "windows" && editor == "notepad" {
 		return c.openNotepadWithMonitoring(scriptPath, verbose)
 	}
 
-	// Open editor normally for other editors
 	var cmd *exec.Cmd
 	if editor == "open" && runtime.GOOS == "darwin" {
-		// macOS: use open -e for TextEdit, or open -a for specific app
-		// Try to use the default editor via open -t (text editor)
 		cmd = exec.Command("open", "-t", scriptPath)
 	} else {
 		cmd = exec.Command(editor, scriptPath)
@@ -447,7 +612,6 @@ func (c *CLI) createScriptInteractive(serviceName string, verbose bool) (string,
 		return "", fmt.Errorf("editor failed: %w", err)
 	}
 
-	// Verify file was created and has content
 	info, err := os.Stat(scriptPath)
 	if err != nil {
 		return "", fmt.Errorf("script file not found: %w", err)
@@ -464,31 +628,25 @@ func (c *CLI) createScriptInteractive(serviceName string, verbose bool) (string,
 	return scriptPath, nil
 }
 
-// getEditor returns the editor command to use.
 func getEditor() string {
-	// Try EDITOR environment variable first
 	if editor := os.Getenv("EDITOR"); editor != "" {
 		return editor
 	}
 
-	// Try VISUAL environment variable
 	if editor := os.Getenv("VISUAL"); editor != "" {
 		return editor
 	}
 
-	// Platform-specific defaults
 	switch runtime.GOOS {
 	case "windows":
-		// Try common Windows editors
 		if _, err := exec.LookPath("code"); err == nil {
 			return "code"
 		}
 		if _, err := exec.LookPath("notepad"); err == nil {
 			return "notepad"
 		}
-		return "notepad" // Fallback
+		return "notepad"
 	case "darwin":
-		// macOS
 		if _, err := exec.LookPath("code"); err == nil {
 			return "code"
 		}
@@ -498,14 +656,11 @@ func getEditor() string {
 		if _, err := exec.LookPath("nano"); err == nil {
 			return "nano"
 		}
-		// Use open -e for TextEdit, or fallback to vim
 		if _, err := exec.LookPath("open"); err == nil {
-			// We'll handle "open" specially in createScriptInteractive
 			return "open"
 		}
-		return "vim" // Fallback
+		return "vim"
 	case "linux":
-		// Linux
 		if _, err := exec.LookPath("code"); err == nil {
 			return "code"
 		}
@@ -518,13 +673,12 @@ func getEditor() string {
 		if _, err := exec.LookPath("vi"); err == nil {
 			return "vi"
 		}
-		return "nano" // Fallback
+		return "nano"
 	default:
-		return "vi" // Ultimate fallback
+		return "vi"
 	}
 }
 
-// createUnixTemplate creates a template for Unix-like systems (Linux/macOS).
 func createUnixTemplate(serviceName string) string {
 	return fmt.Sprintf(`#!/bin/sh
 # Service: %s
@@ -532,13 +686,11 @@ func createUnixTemplate(serviceName string) string {
 
 # Your code here:
 
-exit 0
+	exit 0
 `, serviceName, time.Now().Format("2006-01-02 15:04:05"))
 }
 
-// createWindowsTemplate creates a template for Windows systems.
 func createWindowsTemplate(serviceName string) string {
-	// Get current user
 	username := os.Getenv("USERNAME")
 	if username == "" {
 		username = os.Getenv("USER")
@@ -547,7 +699,6 @@ func createWindowsTemplate(serviceName string) string {
 		username = "unknown"
 	}
 
-	// Get local and UTC time
 	now := time.Now()
 	localTime := now.Format("2006-01-02 15:04:05 MST")
 	utcTime := now.UTC().Format("2006-01-02 15:04:05 UTC")
@@ -563,19 +714,16 @@ exit /b 0
 `, serviceName, localTime, utcTime, username)
 }
 
-// openNotepadWithMonitoring opens Notepad and monitors the file, closing Notepad when saved.
 func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// Get initial file modification time
 	initialInfo, err := os.Stat(scriptPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to stat file: %w", err)
 	}
 	initialModTime := initialInfo.ModTime()
 
-	// Start Notepad
 	cmd := exec.CommandContext(ctx, "notepad", scriptPath)
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("failed to start notepad: %w", err)
@@ -583,7 +731,6 @@ func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string
 
 	notepadPID := cmd.Process.Pid
 
-	// Monitor file for changes in a goroutine with context
 	fileSaved := make(chan bool, 1)
 	go func() {
 		defer close(fileSaved)
@@ -596,28 +743,22 @@ func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string
 				fileSaved <- false
 				return
 			case <-ticker.C:
-				// Check if Notepad process is still running (Windows-specific)
 				if runtime.GOOS == "windows" {
 					checkCmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", notepadPID), "/NH")
 					output, _ := checkCmd.Output()
 					if !strings.Contains(strings.ToLower(string(output)), fmt.Sprintf("%d", notepadPID)) {
-						// Process has exited
 						fileSaved <- false
 						return
 					}
 				} else {
-					// Unix-like: try to signal the process
 					if err := cmd.Process.Signal(os.Signal(syscall.Signal(0))); err != nil {
-						// Process has exited
 						fileSaved <- false
 						return
 					}
 				}
 
-				// Check if file was modified
 				info, err := os.Stat(scriptPath)
 				if err == nil && !info.ModTime().Equal(initialModTime) {
-					// File was saved, wait a bit more to ensure it's fully saved
 					time.Sleep(500 * time.Millisecond)
 					fileSaved <- true
 					return
@@ -626,7 +767,6 @@ func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string
 		}
 	}()
 
-	// Wait for file to be saved or Notepad to close
 	saved := false
 	select {
 	case result := <-fileSaved:
@@ -636,15 +776,12 @@ func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string
 	}
 
 	if saved {
-		// Close Notepad after a short delay
 		time.Sleep(300 * time.Millisecond)
 		closeNotepad(notepadPID)
 	}
 
-	// Wait for Notepad to close
-	_, _ = cmd.Process.Wait() // Ignore error and state, process may have already exited
+	_, _ = cmd.Process.Wait()
 
-	// Verify file was created and has content
 	info, err := os.Stat(scriptPath)
 	if err != nil {
 		return "", fmt.Errorf("script file not found: %w", err)
@@ -661,18 +798,15 @@ func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string
 	return scriptPath, nil
 }
 
-// closeNotepad closes Notepad by PID on Windows.
 func closeNotepad(pid int) {
 	if runtime.GOOS != "windows" {
 		return
 	}
 
-	// Use taskkill to close Notepad gracefully first, then force if needed
 	cmd := exec.Command("taskkill", "/PID", fmt.Sprintf("%d", pid))
-	_ = cmd.Run() // Ignore errors, Notepad might have already closed
+	_ = cmd.Run()
 
-	// Wait a bit and force kill if still running
 	time.Sleep(200 * time.Millisecond)
 	cmd = exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
-	_ = cmd.Run() // Ignore errors
+	_ = cmd.Run()
 }

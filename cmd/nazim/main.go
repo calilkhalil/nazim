@@ -168,6 +168,66 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return exitOK
 
+	case "status", "info":
+		if len(cmdArgs) == 0 {
+			fmt.Fprintf(stderr, "nazim: %s requires a service name\n", command)
+			return exitError
+		}
+		// Join all remaining args to support service names with spaces
+		serviceName := strings.Join(cmdArgs, " ")
+		if err := cliHandler.Status(ctx, serviceName, verbose); err != nil {
+			fmt.Fprintf(stderr, "nazim: %v\n", err)
+			return exitError
+		}
+		return exitOK
+
+	case "edit":
+		if len(cmdArgs) == 0 {
+			fmt.Fprintf(stderr, "nazim: edit requires a service name\n")
+			return exitError
+		}
+		// Join all remaining args to support service names with spaces
+		serviceName := strings.Join(cmdArgs, " ")
+		editFlags := &cli.Flags{
+			Name:      flags.Name,
+			Command:   flags.Command,
+			Args:      flags.Args,
+			WorkDir:   flags.WorkDir,
+			OnStartup: flags.OnStartup,
+			Interval:  flags.Interval,
+		}
+		if err := cliHandler.Edit(ctx, serviceName, editFlags, verbose); err != nil {
+			fmt.Fprintf(stderr, "nazim: %v\n", err)
+			return exitError
+		}
+		return exitOK
+
+	case "enable":
+		if len(cmdArgs) == 0 {
+			fmt.Fprintf(stderr, "nazim: enable requires a service name\n")
+			return exitError
+		}
+		// Join all remaining args to support service names with spaces
+		serviceName := strings.Join(cmdArgs, " ")
+		if err := cliHandler.Enable(ctx, serviceName, verbose); err != nil {
+			fmt.Fprintf(stderr, "nazim: %v\n", err)
+			return exitError
+		}
+		return exitOK
+
+	case "disable":
+		if len(cmdArgs) == 0 {
+			fmt.Fprintf(stderr, "nazim: disable requires a service name\n")
+			return exitError
+		}
+		// Join all remaining args to support service names with spaces
+		serviceName := strings.Join(cmdArgs, " ")
+		if err := cliHandler.Disable(ctx, serviceName, verbose); err != nil {
+			fmt.Fprintf(stderr, "nazim: %v\n", err)
+			return exitError
+		}
+		return exitOK
+
 	default:
 		fmt.Fprintf(stderr, "nazim: unknown command: %s\n", command)
 		printUsage(stderr)
@@ -215,9 +275,13 @@ Usage: nazim [command] [options]
 Commands:
   add <options>     add a new service
   list              list all services
+  status <name>     show detailed service information
+  edit <name>       update an existing service
   remove <name>     remove a service
-  start <name>      start a service
+  start <name>      start a service manually
   stop <name>       stop a service
+  enable <name>     enable a service
+  disable <name>    disable a service
 
 Add Options:
   -n, --name <name>        service name (required)
@@ -263,6 +327,16 @@ Examples:
 
   # Stop a service
   nazim stop backup
+
+  # Show service status
+  nazim status backup
+
+  # Edit a service
+  nazim edit backup --interval 2h
+
+  # Enable/disable a service
+  nazim enable backup
+  nazim disable backup
 
 Interval Format:
   Use s (seconds), m (minutes), h (hours), or d (days)
