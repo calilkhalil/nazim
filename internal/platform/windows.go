@@ -162,10 +162,10 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 			if hasStartup {
 				args = append(args, "/sc", "onstart")
 				args = append(args, "/ri", fmt.Sprintf("%d", minutes))
-				args = append(args, "/rl", "HIGHEST")
 			} else {
 				args = append(args, "/sc", "minute", "/mo", fmt.Sprintf("%d", minutes))
 			}
+			args = append(args, "/rl", "HIGHEST")
 		}
 	} else if hasStartup {
 		args = append(args, "/sc", "onstart")
