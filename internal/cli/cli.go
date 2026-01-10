@@ -84,23 +84,33 @@ func (c *CLI) Add(ctx context.Context, flags *Flags, verbose bool) error {
 		return err
 	}
 
-	if err := c.cfg.AddService(svc); err != nil {
-		return fmt.Errorf("failed to add service: %w", err)
-	}
-
-	if verbose {
-		fmt.Printf("Service '%s' added to configuration.\n", flags.Name)
-	}
-
 	platformMgr, err := platform.NewManager()
 	if err != nil {
-		_ = c.cfg.RemoveService(flags.Name)
 		return fmt.Errorf("failed to create platform manager: %w", err)
 	}
 
 	if err := platformMgr.Install(svc); err != nil {
-		_ = c.cfg.RemoveService(flags.Name)
 		return fmt.Errorf("failed to install service: %w", err)
+	}
+
+	if err := c.cfg.AddService(svc); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			if err := c.cfg.UpdateService(svc); err != nil {
+				if uninstallErr := platformMgr.Uninstall(svc.Name); uninstallErr != nil {
+					return fmt.Errorf("failed to update service in config: %w (also failed to uninstall: %v)", err, uninstallErr)
+				}
+				return fmt.Errorf("failed to update service in config: %w", err)
+			}
+		} else {
+			if uninstallErr := platformMgr.Uninstall(svc.Name); uninstallErr != nil {
+				return fmt.Errorf("failed to add service to config: %w (also failed to uninstall: %v)", err, uninstallErr)
+			}
+			return fmt.Errorf("failed to add service to config: %w", err)
+		}
+	}
+
+	if verbose {
+		fmt.Printf("Service '%s' added to configuration.\n", flags.Name)
 	}
 
 	fmt.Printf("Service '%s' installed successfully!\n", flags.Name)
