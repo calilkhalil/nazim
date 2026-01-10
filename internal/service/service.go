@@ -51,6 +51,10 @@ func formatDuration(d time.Duration) string {
 
 func parseDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
+	
+	if s == "" {
+		return 0, fmt.Errorf("duration cannot be empty")
+	}
 
 	var multiplier time.Duration
 	switch {
@@ -74,6 +78,11 @@ func parseDuration(s string) (time.Duration, error) {
 	if _, err := fmt.Sscanf(s, "%d", &value); err != nil {
 		return 0, fmt.Errorf("invalid duration value: %w", err)
 	}
+	
+	// Validate value is positive
+	if value <= 0 {
+		return 0, fmt.Errorf("duration value must be positive, got %d", value)
+	}
 
 	return time.Duration(value) * multiplier, nil
 }
@@ -95,12 +104,50 @@ func (s *Service) Validate() error {
 	if s.Name == "" {
 		return fmt.Errorf("service name is required")
 	}
+	
+	// Validate service name - check for invalid characters
+	if err := validateServiceName(s.Name); err != nil {
+		return fmt.Errorf("invalid service name: %w", err)
+	}
+	
 	if s.Command == "" {
 		return fmt.Errorf("service command is required")
 	}
 	if !s.OnStartup && s.Interval.Duration == 0 {
 		return fmt.Errorf("service must have either on_startup=true or an interval")
 	}
+	
+	// Validate interval is not negative
+	if s.Interval.Duration < 0 {
+		return fmt.Errorf("interval cannot be negative")
+	}
+	
+	return nil
+}
+
+// validateServiceName checks if a service name contains invalid characters.
+func validateServiceName(name string) error {
+	// Windows Task Scheduler doesn't allow: \ / : * ? " < > |
+	// systemd allows most characters but spaces and some special chars can cause issues
+	// launchd is more permissive but we'll be conservative
+	
+	invalidChars := []string{"\\", "/", ":", "*", "?", "\"", "<", ">", "|", "\n", "\r", "\t"}
+	for _, char := range invalidChars {
+		if strings.Contains(name, char) {
+			return fmt.Errorf("service name cannot contain '%s'", char)
+		}
+	}
+	
+	// Check for leading/trailing spaces
+	if strings.TrimSpace(name) != name {
+		return fmt.Errorf("service name cannot have leading or trailing spaces")
+	}
+	
+	// Check for empty after trim
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("service name cannot be empty or only whitespace")
+	}
+	
 	return nil
 }
 

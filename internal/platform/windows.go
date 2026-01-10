@@ -144,54 +144,59 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 	}
 
 	// Primeiro, remover se já existir
-	_ = m.Uninstall(svc.Name)
+	if err := m.Uninstall(svc.Name); err != nil {
+		// Log but don't fail if task doesn't exist
+		if !strings.Contains(err.Error(), "does not exist") {
+			// Non-critical error, continue
+		}
+	}
 
-	// Construir o comando
-	cmdParts := []string{svc.Command}
-	cmdParts = append(cmdParts, svc.Args...)
-	command := strings.Join(cmdParts, " ")
+	// Build command with proper escaping to prevent injection
+	// Use quoted command and args separately for safety
+	command := buildWindowsCommand(svc.Command, svc.Args)
 
-	// Criar comando schtasks
+	// Build schtasks arguments incrementally
 	args := []string{
 		"/create",
 		"/tn", fmt.Sprintf("Nazim_%s", svc.Name),
 		"/tr", command,
-		"/sc", "onstart", // Por padrão, no startup
-		"/f", // Forçar criação
+		"/f", // Force creation
 	}
 
-	// Se tiver diretório de trabalho, adicionar
+	// Add working directory if specified
+	// Note: schtasks doesn't support /cwd directly, so we wrap the command
 	if svc.WorkDir != "" {
-		args = append(args, "/ru", "SYSTEM", "/rp", "")
-		// Nota: /cwd não é suportado diretamente, precisamos usar um wrapper
+		// Create a wrapper command that changes directory first
+		wrappedCommand := fmt.Sprintf(`cmd /c "cd /d %s && %s"`, escapeWindowsPath(svc.WorkDir), command)
+		args[3] = wrappedCommand // Update /tr argument
 	}
 
-	// Se tiver intervalo, usar /sc onlogon ou criar tarefa agendada
-	if svc.GetInterval() > 0 {
-		// Converter intervalo para formato do Windows Task Scheduler
-		// Para intervalos, usamos /sc minute com /mo (modifier)
+	// Determine schedule type
+	hasInterval := svc.GetInterval() > 0
+	hasStartup := svc.OnStartup
+
+	if hasInterval {
+		// Convert interval to Windows Task Scheduler format
 		minutes := int(svc.GetInterval().Minutes())
 		if minutes > 0 {
-			args = []string{
-				"/create",
-				"/tn", fmt.Sprintf("Nazim_%s", svc.Name),
-				"/tr", command,
-				"/sc", "minute",
-				"/mo", fmt.Sprintf("%d", minutes),
-				"/f",
+			if hasStartup {
+				// For startup + interval: create task that runs at boot and repeats
+				// Use /sc onstart with /ri (repeat interval in minutes)
+				// Note: /ri requires the task to be triggered first, so we use onstart
+				args = append(args, "/sc", "onstart")
+				// Add repeat interval (in minutes)
+				args = append(args, "/ri", fmt.Sprintf("%d", minutes))
+			} else {
+				// Only interval, no startup: use minute schedule
+				args = append(args, "/sc", "minute", "/mo", fmt.Sprintf("%d", minutes))
 			}
 		}
-	}
-
-	// Se for apenas startup, manter /sc onstart
-	if svc.OnStartup && svc.GetInterval() == 0 {
-		args = []string{
-			"/create",
-			"/tn", fmt.Sprintf("Nazim_%s", svc.Name),
-			"/tr", command,
-			"/sc", "onstart",
-			"/f",
-		}
+	} else if hasStartup {
+		// Only startup, no interval
+		args = append(args, "/sc", "onstart")
+	} else {
+		// Default to onstart if nothing specified
+		args = append(args, "/sc", "onstart")
 	}
 
 	cmd := exec.Command("schtasks", args...)
@@ -201,6 +206,43 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 	}
 
 	return nil
+}
+
+// buildWindowsCommand safely builds a Windows command string.
+// Escapes special characters to prevent command injection.
+func buildWindowsCommand(cmd string, args []string) string {
+	// Escape the command path (quote if contains spaces or special chars)
+	escapedCmd := escapeWindowsCommand(cmd)
+	
+	if len(args) == 0 {
+		return escapedCmd
+	}
+	
+	// Escape each argument
+	escapedArgs := make([]string, len(args))
+	for i, arg := range args {
+		escapedArgs[i] = escapeWindowsCommand(arg)
+	}
+	
+	return escapedCmd + " " + strings.Join(escapedArgs, " ")
+}
+
+// escapeWindowsCommand escapes a command or argument for Windows.
+func escapeWindowsCommand(s string) string {
+	// If contains spaces or special characters, wrap in quotes
+	if strings.ContainsAny(s, " \t\"&|<>()") {
+		// Escape internal quotes by doubling them
+		escaped := strings.ReplaceAll(s, `"`, `""`)
+		return `"` + escaped + `"`
+	}
+	return s
+}
+
+// escapeWindowsPath escapes a Windows path for use in cmd /c.
+func escapeWindowsPath(path string) string {
+	// Quote the path and escape internal quotes
+	escaped := strings.ReplaceAll(path, `"`, `""`)
+	return `"` + escaped + `"`
 }
 
 // Uninstall removes a service from Windows.

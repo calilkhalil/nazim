@@ -82,10 +82,16 @@ WantedBy=timers.target
 			return fmt.Errorf("failed to write timer file: %w", err)
 		}
 
-		// Recarregar e habilitar
-		_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
-		_ = exec.Command("systemctl", "--user", "enable", fmt.Sprintf("nazim-%s.timer", svc.Name)).Run()
-		_ = exec.Command("systemctl", "--user", "start", fmt.Sprintf("nazim-%s.timer", svc.Name)).Run()
+		// Reload and enable
+		if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
+			return fmt.Errorf("failed to reload systemd daemon: %w", err)
+		}
+		if err := exec.Command("systemctl", "--user", "enable", fmt.Sprintf("nazim-%s.timer", svc.Name)).Run(); err != nil {
+			return fmt.Errorf("failed to enable timer: %w", err)
+		}
+		if err := exec.Command("systemctl", "--user", "start", fmt.Sprintf("nazim-%s.timer", svc.Name)).Run(); err != nil {
+			return fmt.Errorf("failed to start timer: %w", err)
+		}
 	} else if svc.OnStartup && svc.GetInterval() == 0 {
 		content.WriteString("[Install]\n")
 		content.WriteString("WantedBy=default.target\n")
@@ -94,8 +100,12 @@ WantedBy=timers.target
 			return fmt.Errorf("failed to write service file: %w", err)
 		}
 
-		_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
-		_ = exec.Command("systemctl", "--user", "enable", fmt.Sprintf("nazim-%s.service", svc.Name)).Run()
+		if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
+			return fmt.Errorf("failed to reload systemd daemon: %w", err)
+		}
+		if err := exec.Command("systemctl", "--user", "enable", fmt.Sprintf("nazim-%s.service", svc.Name)).Run(); err != nil {
+			return fmt.Errorf("failed to enable service: %w", err)
+		}
 	}
 
 	return nil
@@ -103,15 +113,23 @@ WantedBy=timers.target
 
 // Uninstall removes a service from Linux.
 func (m *LinuxManager) Uninstall(name string) error {
+	// Stop and disable timer (ignore errors if not exists)
 	_ = exec.Command("systemctl", "--user", "stop", fmt.Sprintf("nazim-%s.timer", name)).Run()
 	_ = exec.Command("systemctl", "--user", "disable", fmt.Sprintf("nazim-%s.timer", name)).Run()
+	
+	// Stop and disable service (ignore errors if not exists)
 	_ = exec.Command("systemctl", "--user", "stop", fmt.Sprintf("nazim-%s.service", name)).Run()
 	_ = exec.Command("systemctl", "--user", "disable", fmt.Sprintf("nazim-%s.service", name)).Run()
 
+	// Remove files
 	userSystemdDir := filepath.Join(os.Getenv("HOME"), ".config", "systemd", "user")
 	_ = os.Remove(filepath.Join(userSystemdDir, fmt.Sprintf("nazim-%s.service", name)))
 	_ = os.Remove(filepath.Join(userSystemdDir, fmt.Sprintf("nazim-%s.timer", name)))
-	_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
+	
+	// Reload daemon (important after file removal)
+	if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
+		return fmt.Errorf("failed to reload systemd daemon: %w", err)
+	}
 
 	return nil
 }

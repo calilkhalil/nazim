@@ -39,18 +39,21 @@ func (m *DarwinManager) Install(svc *service.Service) error {
 	content.WriteString("  <key>ProgramArguments</key>\n")
 	content.WriteString("  <array>\n")
 
-	// Dividir comando e argumentos
-	parts := strings.Fields(svc.Command)
-	for _, part := range parts {
-		content.WriteString(fmt.Sprintf("    <string>%s</string>\n", part))
-	}
+	// Command is already separated from args, don't split it
+	// Escape XML special characters in command
+	escapedCmd := escapeXML(svc.Command)
+	content.WriteString(fmt.Sprintf("    <string>%s</string>\n", escapedCmd))
+	
+	// Add args (already separated)
 	for _, arg := range svc.Args {
-		content.WriteString(fmt.Sprintf("    <string>%s</string>\n", arg))
+		escapedArg := escapeXML(arg)
+		content.WriteString(fmt.Sprintf("    <string>%s</string>\n", escapedArg))
 	}
 	content.WriteString("  </array>\n")
 
 	if svc.WorkDir != "" {
-		content.WriteString(fmt.Sprintf("  <key>WorkingDirectory</key>\n  <string>%s</string>\n", svc.WorkDir))
+		escapedWorkDir := escapeXML(svc.WorkDir)
+		content.WriteString(fmt.Sprintf("  <key>WorkingDirectory</key>\n  <string>%s</string>\n", escapedWorkDir))
 	}
 
 	if svc.OnStartup {

@@ -235,6 +235,10 @@ func (c *CLI) Stop(ctx context.Context, name string, verbose bool) error {
 // parseDuration parses a duration string (e.g., "5m", "1h", "30s").
 func parseDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
+	
+	if s == "" {
+		return 0, fmt.Errorf("duration cannot be empty")
+	}
 
 	var multiplier time.Duration
 	switch {
@@ -257,6 +261,11 @@ func parseDuration(s string) (time.Duration, error) {
 	var value int
 	if _, err := fmt.Sscanf(s, "%d", &value); err != nil {
 		return 0, fmt.Errorf("invalid duration value: %w", err)
+	}
+	
+	// Validate value is positive
+	if value <= 0 {
+		return 0, fmt.Errorf("duration value must be positive, got %d", value)
 	}
 
 	return time.Duration(value) * multiplier, nil
@@ -469,6 +478,9 @@ exit /b 0
 
 // openNotepadWithMonitoring opens Notepad and monitors the file, closing Notepad when saved.
 func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
 	// Get initial file modification time
 	initialInfo, err := os.Stat(scriptPath)
 	if err != nil {
@@ -477,51 +489,64 @@ func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string
 	initialModTime := initialInfo.ModTime()
 
 	// Start Notepad
-	cmd := exec.Command("notepad", scriptPath)
+	cmd := exec.CommandContext(ctx, "notepad", scriptPath)
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("failed to start notepad: %w", err)
 	}
 
 	notepadPID := cmd.Process.Pid
 
-	// Monitor file for changes in a goroutine
+	// Monitor file for changes in a goroutine with context
 	fileSaved := make(chan bool, 1)
 	go func() {
+		defer close(fileSaved)
 		ticker := time.NewTicker(300 * time.Millisecond)
 		defer ticker.Stop()
 
-		for range ticker.C {
-			// Check if Notepad process is still running (Windows-specific)
-			if runtime.GOOS == "windows" {
-				checkCmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", notepadPID), "/NH")
-				output, _ := checkCmd.Output()
-				if !strings.Contains(strings.ToLower(string(output)), fmt.Sprintf("%d", notepadPID)) {
-					// Process has exited
-					fileSaved <- false
-					return
-				}
-			} else {
-				// Unix-like: try to signal the process
-				if err := cmd.Process.Signal(os.Signal(syscall.Signal(0))); err != nil {
-					// Process has exited
-					fileSaved <- false
-					return
-				}
-			}
-
-			// Check if file was modified
-			info, err := os.Stat(scriptPath)
-			if err == nil && !info.ModTime().Equal(initialModTime) {
-				// File was saved, wait a bit more to ensure it's fully saved
-				time.Sleep(500 * time.Millisecond)
-				fileSaved <- true
+		for {
+			select {
+			case <-ctx.Done():
+				fileSaved <- false
 				return
+			case <-ticker.C:
+				// Check if Notepad process is still running (Windows-specific)
+				if runtime.GOOS == "windows" {
+					checkCmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", notepadPID), "/NH")
+					output, _ := checkCmd.Output()
+					if !strings.Contains(strings.ToLower(string(output)), fmt.Sprintf("%d", notepadPID)) {
+						// Process has exited
+						fileSaved <- false
+						return
+					}
+				} else {
+					// Unix-like: try to signal the process
+					if err := cmd.Process.Signal(os.Signal(syscall.Signal(0))); err != nil {
+						// Process has exited
+						fileSaved <- false
+						return
+					}
+				}
+
+				// Check if file was modified
+				info, err := os.Stat(scriptPath)
+				if err == nil && !info.ModTime().Equal(initialModTime) {
+					// File was saved, wait a bit more to ensure it's fully saved
+					time.Sleep(500 * time.Millisecond)
+					fileSaved <- true
+					return
+				}
 			}
 		}
 	}()
 
 	// Wait for file to be saved or Notepad to close
-	saved := <-fileSaved
+	saved := false
+	select {
+	case result := <-fileSaved:
+		saved = result
+	case <-ctx.Done():
+		return "", fmt.Errorf("timeout waiting for file save")
+	}
 
 	if saved {
 		// Close Notepad after a short delay
