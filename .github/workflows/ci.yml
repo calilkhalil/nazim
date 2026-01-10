@@ -27,6 +27,9 @@ jobs:
       - name: Get dependencies
         run: go mod download
 
+      - name: Tidy dependencies
+        run: go mod tidy
+
       - name: Verify dependencies
         run: go mod verify
 
@@ -53,6 +56,9 @@ jobs:
 
       - name: Get dependencies
         run: go mod download
+
+      - name: Tidy dependencies
+        run: go mod tidy
 
       - name: Build
         run: go build ./cmd/nazim
@@ -103,6 +109,9 @@ jobs:
 
       - name: Get dependencies
         run: go mod download
+
+      - name: Tidy dependencies
+        run: go mod tidy
 
       - name: Build
         env:
