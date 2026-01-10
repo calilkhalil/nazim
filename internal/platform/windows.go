@@ -46,40 +46,34 @@ func requestElevation() error {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
-	// Get command line arguments and escape them properly for PowerShell
+	// Get command line arguments
 	args := os.Args[1:]
-	var escapedArgs []string
+	
+	// Build PowerShell array syntax for arguments
+	// This is more reliable than passing as a single string
+	var argArrayParts []string
 	for _, arg := range args {
-		// Escape quotes and wrap in quotes if needed
-		escaped := strings.ReplaceAll(arg, `"`, `""`)
-		if strings.Contains(escaped, " ") || strings.Contains(escaped, `"`) {
-			escaped = `"` + escaped + `"`
-		}
-		escapedArgs = append(escapedArgs, escaped)
+		// Escape single quotes for PowerShell and wrap in single quotes
+		escaped := strings.ReplaceAll(arg, `'`, `''`)
+		argArrayParts = append(argArrayParts, fmt.Sprintf(`'%s'`, escaped))
 	}
-	argStr := strings.Join(escapedArgs, " ")
+	argArrayStr := strings.Join(argArrayParts, ",")
 
-	// Use PowerShell to request elevation with explicit UAC prompt
+	// Use PowerShell to request elevation
 	// The -Verb RunAs will trigger UAC prompt
-	// We need to properly escape the arguments for PowerShell
+	// Pass arguments as a PowerShell array for better reliability
 	psCmd := fmt.Sprintf(
-		`$exe = "%s"; $args = %s; try {
-			$proc = Start-Process -FilePath $exe -ArgumentList $args -Verb RunAs -PassThru -Wait
-			if ($proc) {
-				exit $proc.ExitCode
-			} else {
-				exit 1
-			}
-		} catch {
-			Write-Error "Elevation failed: $_"
-			exit 1
-		}`,
-		exe, argStr,
+		`$proc = Start-Process -FilePath '%s' -ArgumentList @(%s) -Verb RunAs -PassThru -Wait; if ($proc) { exit $proc.ExitCode } else { exit 1 }`,
+		strings.ReplaceAll(exe, `'`, `''`), argArrayStr,
 	)
 
-	// Run PowerShell - this will show UAC prompt
-	// Using -WindowStyle Normal to ensure UAC prompt is visible
-	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Normal", "-Command", psCmd)
+	psArgs := []string{
+		"-NoProfile",
+		"-ExecutionPolicy", "Bypass",
+		"-Command", psCmd,
+	}
+
+	cmd := exec.Command("powershell", psArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -92,7 +86,7 @@ func requestElevation() error {
 			exitCode := exitError.ExitCode()
 			if exitCode == 1 || exitCode == 1223 {
 				// 1223 is ERROR_CANCELLED in Windows
-				return fmt.Errorf("elevation was cancelled - please approve the UAC prompt to continue")
+				return fmt.Errorf("elevation was cancelled or denied - please approve the UAC prompt to continue")
 			}
 		}
 		return fmt.Errorf("failed to elevate privileges: %w", err)
@@ -120,9 +114,15 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 	// Check for admin privileges or request elevation
 	if !isAdmin() {
 		fmt.Fprintf(os.Stderr, "\n[!] Administrator privileges required for installing services.\n")
-		fmt.Fprintf(os.Stderr, "[!] Requesting elevation (UAC prompt will appear)...\n\n")
+		fmt.Fprintf(os.Stderr, "[!] Requesting elevation (UAC prompt will appear)...\n")
+		fmt.Fprintf(os.Stderr, "[!] If UAC prompt does not appear, please run the command as administrator.\n\n")
+		
 		if err := requestElevation(); err != nil {
-			return fmt.Errorf("administrator privileges required to install services. Please run as administrator or approve the UAC prompt: %w", err)
+			// Check if the error indicates UAC was denied/cancelled
+			if strings.Contains(err.Error(), "cancelled") || strings.Contains(err.Error(), "denied") {
+				return fmt.Errorf("UAC prompt was cancelled or denied. Please approve the UAC prompt to install the service")
+			}
+			return fmt.Errorf("failed to request elevation: %w\nHint: Try running the command as administrator manually", err)
 		}
 		// If elevation was successful, this process will exit and a new elevated one will run
 		// So we return here to avoid continuing in the non-elevated process

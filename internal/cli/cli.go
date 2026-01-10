@@ -39,6 +39,14 @@ type Flags struct {
 
 // Add adds a new service.
 func (c *CLI) Add(ctx context.Context, flags *Flags, verbose bool) error {
+	// Validate required fields early
+	if flags.Name == "" {
+		return fmt.Errorf("service name is required (use --name or -n)")
+	}
+	if flags.Command == "" {
+		return fmt.Errorf("service command is required (use --command or -c, or 'write'/'edit' for interactive mode)")
+	}
+
 	// Check if command is "write" or "edit" - open interactive editor
 	command := flags.Command
 	if command == "write" || command == "edit" {
@@ -503,35 +511,32 @@ func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string
 		ticker := time.NewTicker(300 * time.Millisecond)
 		defer ticker.Stop()
 
-		for {
-			select {
-			case <-ticker.C:
-				// Check if Notepad process is still running (Windows-specific)
-				if runtime.GOOS == "windows" {
-					checkCmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", notepadPID), "/NH")
-					output, _ := checkCmd.Output()
-					if !strings.Contains(strings.ToLower(string(output)), fmt.Sprintf("%d", notepadPID)) {
-						// Process has exited
-						fileSaved <- false
-						return
-					}
-				} else {
-					// Unix-like: try to signal the process
-					if err := cmd.Process.Signal(os.Signal(syscall.Signal(0))); err != nil {
-						// Process has exited
-						fileSaved <- false
-						return
-					}
-				}
-
-				// Check if file was modified
-				info, err := os.Stat(scriptPath)
-				if err == nil && !info.ModTime().Equal(initialModTime) {
-					// File was saved, wait a bit more to ensure it's fully saved
-					time.Sleep(500 * time.Millisecond)
-					fileSaved <- true
+		for range ticker.C {
+			// Check if Notepad process is still running (Windows-specific)
+			if runtime.GOOS == "windows" {
+				checkCmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", notepadPID), "/NH")
+				output, _ := checkCmd.Output()
+				if !strings.Contains(strings.ToLower(string(output)), fmt.Sprintf("%d", notepadPID)) {
+					// Process has exited
+					fileSaved <- false
 					return
 				}
+			} else {
+				// Unix-like: try to signal the process
+				if err := cmd.Process.Signal(os.Signal(syscall.Signal(0))); err != nil {
+					// Process has exited
+					fileSaved <- false
+					return
+				}
+			}
+
+			// Check if file was modified
+			info, err := os.Stat(scriptPath)
+			if err == nil && !info.ModTime().Equal(initialModTime) {
+				// File was saved, wait a bit more to ensure it's fully saved
+				time.Sleep(500 * time.Millisecond)
+				fileSaved <- true
+				return
 			}
 		}
 	}()
@@ -546,7 +551,7 @@ func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string
 	}
 
 	// Wait for Notepad to close
-	cmd.Process.Wait()
+	_ = cmd.Process.Wait() // Ignore error, process may have already exited
 
 	// Verify file was created and has content
 	info, err := os.Stat(scriptPath)
@@ -573,10 +578,10 @@ func closeNotepad(pid int) {
 
 	// Use taskkill to close Notepad gracefully first, then force if needed
 	cmd := exec.Command("taskkill", "/PID", fmt.Sprintf("%d", pid))
-	cmd.Run() // Ignore errors, Notepad might have already closed
+	_ = cmd.Run() // Ignore errors, Notepad might have already closed
 
 	// Wait a bit and force kill if still running
 	time.Sleep(200 * time.Millisecond)
 	cmd = exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
-	cmd.Run() // Ignore errors
+	_ = cmd.Run() // Ignore errors
 }
