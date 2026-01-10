@@ -52,6 +52,9 @@ func requestElevation() error {
 	}
 
 	args := strings.Join(os.Args[1:], " ")
+	if args == "" {
+		args = "add"
+	}
 
 	verbPtr, err := syscall.UTF16PtrFromString("runas")
 	if err != nil {
@@ -118,7 +121,7 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 			}
 			return fmt.Errorf("failed to request elevation: %w\nHint: Try running the command as administrator manually", err)
 		}
-		return nil
+		return fmt.Errorf("elevation requested - please run the command again after approving UAC")
 	}
 
 	if err := m.Uninstall(svc.Name); err != nil {
@@ -169,8 +172,6 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 			}
 		}
 	} else if hasStartup {
-		args = append(args, "/sc", "onstart")
-	} else {
 		args = append(args, "/sc", "onstart")
 	}
 
@@ -232,21 +233,21 @@ func (m *WindowsManager) Uninstall(name string) error {
 				}
 				return nil
 			}
-			return fmt.Errorf("failed to delete task: %s: %w", string(output), err)
+				return fmt.Errorf("failed to delete task: %s: %w", string(output), err)
 		}
 		return nil
 	}
 
 	cmd := exec.Command("schtasks", "/delete", "/tn", taskName, "/f")
-		output, err := cmd.CombinedOutput()
-		if err != nil {
+	output, err := cmd.CombinedOutput()
+	if err != nil {
 			outputStr := strings.ToLower(string(output))
 			if strings.Contains(outputStr, "does not exist") ||
 			strings.Contains(outputStr, "cannot find") ||
 				strings.Contains(outputStr, "not found") {
 				return nil
 			}
-		return fmt.Errorf("failed to delete task: %s: %w", string(output), err)
+			return fmt.Errorf("failed to delete task: %s: %w", string(output), err)
 	}
 	return nil
 }
@@ -270,13 +271,13 @@ func (m *WindowsManager) Stop(name string) error {
 	taskName := fmt.Sprintf("Nazim_%s", normalizedName)
 
 	cmd := exec.Command("schtasks", "/end", "/tn", taskName)
-		output, err := cmd.CombinedOutput()
-		if err != nil {
+	output, err := cmd.CombinedOutput()
+	if err != nil {
 			outputStr := strings.ToLower(string(output))
 			if strings.Contains(outputStr, "is not running") {
 				return nil
 			}
-		return fmt.Errorf("failed to stop task: %s: %w", string(output), err)
+			return fmt.Errorf("failed to stop task: %s: %w", string(output), err)
 	}
 	return nil
 }
