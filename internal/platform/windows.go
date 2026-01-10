@@ -46,20 +46,27 @@ func requestElevation() error {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
-	// Get command line arguments and escape them properly
+	// Get command line arguments and escape them properly for PowerShell
 	args := os.Args[1:]
-	argStr := strings.Join(args, " ")
-	// Escape quotes in arguments for PowerShell
-	argStr = strings.ReplaceAll(argStr, `"`, `\"`)
+	var escapedArgs []string
+	for _, arg := range args {
+		// Escape quotes and wrap in quotes if needed
+		escaped := strings.ReplaceAll(arg, `"`, `""`)
+		if strings.Contains(escaped, " ") {
+			escaped = `"` + escaped + `"`
+		}
+		escapedArgs = append(escapedArgs, escaped)
+	}
+	argStr := strings.Join(escapedArgs, " ")
 
 	// Use PowerShell to request elevation
 	// This will show a UAC prompt
 	psCmd := fmt.Sprintf(
-		`Start-Process -FilePath "%s" -ArgumentList "%s" -Verb RunAs -Wait`,
+		`$proc = Start-Process -FilePath "%s" -ArgumentList %s -Verb RunAs -PassThru -Wait; exit $proc.ExitCode`,
 		exe, argStr,
 	)
 
-	cmd := exec.Command("powershell", "-Command", psCmd)
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", psCmd)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -89,7 +96,9 @@ func checkAdminOrElevate() error {
 func (m *WindowsManager) Install(svc *service.Service) error {
 	// Check for admin privileges or request elevation
 	if !isAdmin() {
-		if err := checkAdminOrElevate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Administrator privileges required for installing services.\n")
+		fmt.Fprintf(os.Stderr, "Requesting elevation (UAC prompt will appear)...\n")
+		if err := requestElevation(); err != nil {
 			return fmt.Errorf("administrator privileges required to install services. Please run as administrator or approve the UAC prompt: %w", err)
 		}
 		// If elevation was successful, this process will exit and a new elevated one will run

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"nazim/internal/config"
@@ -315,7 +316,12 @@ func (c *CLI) createScriptInteractive(serviceName string, verbose bool) (string,
 		}
 	}
 
-	// Open editor
+	// Open editor with file monitoring for Windows Notepad
+	if runtime.GOOS == "windows" && editor == "notepad" {
+		return c.openNotepadWithMonitoring(scriptPath, verbose)
+	}
+
+	// Open editor normally for other editors
 	var cmd *exec.Cmd
 	if editor == "open" && runtime.GOOS == "darwin" {
 		// macOS: use open -e for TextEdit, or open -a for specific app
@@ -450,35 +456,112 @@ exit 0
 // createWindowsTemplate creates a template for Windows systems.
 func createWindowsTemplate(serviceName string) string {
 	return fmt.Sprintf(`@echo off
-REM ============================================================================
-REM nazim Service Script
-REM ============================================================================
-REM Service Name: %s
+REM Service: %s
 REM Created: %s
-REM Location: %%APPDATA%%\nazim\scripts\%s.bat
-REM 
-REM This script is managed by nazim. Write your service code in the section
-REM marked "YOUR CODE HERE" below.
-REM ============================================================================
 
-REM ============================================================================
-REM YOUR CODE HERE
-REM ============================================================================
-REM Write your service logic below this line:
+REM Your code here:
 
-REM Example commands you can use:
-REM - Run a backup: xcopy "C:\data" "D:\backup" /E /I /Y
-REM - Process files: for %%f in (C:\logs\*.log) do process.bat "%%f"
-REM - Send notifications: powershell -Command "Invoke-WebRequest -Uri https://api.example.com/notify"
-REM - Clean up: del /Q "C:\temp\*.tmp"
-REM - Run Python script: python C:\path\to\script.py
-REM - Execute other scripts: call C:\path\to\other-script.bat
-
-REM ============================================================================
-REM END OF YOUR CODE
-REM ============================================================================
-
-REM Exit with status code (0 = success, non-zero = failure)
 exit /b 0
-`, serviceName, time.Now().Format("2006-01-02 15:04:05"), serviceName)
+`, serviceName, time.Now().Format("2006-01-02 15:04:05"))
+}
+
+// openNotepadWithMonitoring opens Notepad and monitors the file, closing Notepad when saved.
+func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string, error) {
+	// Get initial file modification time
+	initialInfo, err := os.Stat(scriptPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to stat file: %w", err)
+	}
+	initialModTime := initialInfo.ModTime()
+
+	// Start Notepad
+	cmd := exec.Command("notepad", scriptPath)
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("failed to start notepad: %w", err)
+	}
+
+	notepadPID := cmd.Process.Pid
+
+	// Monitor file for changes in a goroutine
+	fileSaved := make(chan bool, 1)
+	go func() {
+		ticker := time.NewTicker(300 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				// Check if Notepad process is still running (Windows-specific)
+				if runtime.GOOS == "windows" {
+					checkCmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", notepadPID), "/NH")
+					output, _ := checkCmd.Output()
+					if !strings.Contains(strings.ToLower(string(output)), fmt.Sprintf("%d", notepadPID)) {
+						// Process has exited
+						fileSaved <- false
+						return
+					}
+				} else {
+					// Unix-like: try to signal the process
+					if err := cmd.Process.Signal(os.Signal(syscall.Signal(0))); err != nil {
+						// Process has exited
+						fileSaved <- false
+						return
+					}
+				}
+
+				// Check if file was modified
+				info, err := os.Stat(scriptPath)
+				if err == nil && !info.ModTime().Equal(initialModTime) {
+					// File was saved, wait a bit more to ensure it's fully saved
+					time.Sleep(500 * time.Millisecond)
+					fileSaved <- true
+					return
+				}
+			}
+		}
+	}()
+
+	// Wait for file to be saved or Notepad to close
+	saved := <-fileSaved
+
+	if saved {
+		// Close Notepad after a short delay
+		time.Sleep(300 * time.Millisecond)
+		closeNotepad(notepadPID)
+	}
+
+	// Wait for Notepad to close
+	cmd.Process.Wait()
+
+	// Verify file was created and has content
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		return "", fmt.Errorf("script file not found: %w", err)
+	}
+
+	if info.Size() == 0 {
+		return "", fmt.Errorf("script file is empty")
+	}
+
+	if verbose {
+		fmt.Printf("Script created successfully: %s\n", scriptPath)
+	}
+
+	return scriptPath, nil
+}
+
+// closeNotepad closes Notepad by PID on Windows.
+func closeNotepad(pid int) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+
+	// Use taskkill to close Notepad gracefully first, then force if needed
+	cmd := exec.Command("taskkill", "/PID", fmt.Sprintf("%d", pid))
+	cmd.Run() // Ignore errors, Notepad might have already closed
+
+	// Wait a bit and force kill if still running
+	time.Sleep(200 * time.Millisecond)
+	cmd = exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
+	cmd.Run() // Ignore errors
 }
