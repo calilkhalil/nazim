@@ -130,10 +130,15 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 		return fmt.Errorf("failed to create platform manager: %w", err)
 	}
 
-	// Simple table output
-	fmt.Println("NAME\tCOMMAND\tTYPE\tSTATUS")
-	fmt.Println("----\t-------\t----\t------")
+	// Prepare data for table
+	type rowData struct {
+		name    string
+		command string
+		svcType string
+		status  string
+	}
 
+	rows := make([]rowData, 0, len(services))
 	for _, svc := range services {
 		installed, err := platformMgr.IsInstalled(svc.Name)
 		status := "Not Installed"
@@ -154,22 +159,82 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 			}
 			svcType += fmt.Sprintf("Every %s", formatDuration(svc.GetInterval()))
 		}
+		if svcType == "" {
+			svcType = "-"
+		}
 
 		cmdStr := svc.Command
 		if len(svc.Args) > 0 {
 			cmdStr += " " + strings.Join(svc.Args, " ")
 		}
 
-		fmt.Printf("%s\t%s\t%s\t%s\n", svc.Name, cmdStr, svcType, status)
+		rows = append(rows, rowData{
+			name:    svc.Name,
+			command: cmdStr,
+			svcType: svcType,
+			status:  status,
+		})
 	}
+
+	// Truncate long commands for display (keep first 50 chars)
+	const maxCmdDisplay = 50
+	for i := range rows {
+		if len(rows[i].command) > maxCmdDisplay {
+			rows[i].command = rows[i].command[:maxCmdDisplay] + "..."
+		}
+	}
+
+	// Calculate column widths
+	maxNameLen := 4 // "NAME"
+	maxCmdLen := 7  // "COMMAND"
+	maxTypeLen := 4 // "TYPE"
+	maxStatusLen := 6 // "STATUS"
+
+	for _, row := range rows {
+		if len(row.name) > maxNameLen {
+			maxNameLen = len(row.name)
+		}
+		if len(row.command) > maxCmdLen {
+			maxCmdLen = len(row.command)
+		}
+		if len(row.svcType) > maxTypeLen {
+			maxTypeLen = len(row.svcType)
+		}
+		if len(row.status) > maxStatusLen {
+			maxStatusLen = len(row.status)
+		}
+	}
+
+	// Print table header
+	headerSeparator := strings.Repeat("-", maxNameLen+maxCmdLen+maxTypeLen+maxStatusLen+13)
+	fmt.Println(headerSeparator)
+	fmt.Printf("| %-*s | %-*s | %-*s | %-*s |\n",
+		maxNameLen, "NAME",
+		maxCmdLen, "COMMAND",
+		maxTypeLen, "TYPE",
+		maxStatusLen, "STATUS")
+	fmt.Println(headerSeparator)
+
+	// Print table rows
+	for _, row := range rows {
+		fmt.Printf("| %-*s | %-*s | %-*s | %-*s |\n",
+			maxNameLen, row.name,
+			maxCmdLen, row.command,
+			maxTypeLen, row.svcType,
+			maxStatusLen, row.status)
+	}
+
+	fmt.Println(headerSeparator)
+	fmt.Printf("\nTotal: %d service(s)\n", len(services))
 
 	return nil
 }
 
-// Remove removes a service.
+// Remove removes a service completely (from system, config, and scripts).
 func (c *CLI) Remove(ctx context.Context, name string, verbose bool) error {
-	// Check if exists
-	if _, err := c.cfg.GetService(name); err != nil {
+	// Check if exists and get service info
+	svc, err := c.cfg.GetService(name)
+	if err != nil {
 		return fmt.Errorf("service '%s' does not exist", name)
 	}
 
@@ -180,8 +245,30 @@ func (c *CLI) Remove(ctx context.Context, name string, verbose bool) error {
 	}
 
 	if err := platformMgr.Uninstall(name); err != nil {
-		if verbose {
-			fmt.Printf("Warning: failed to uninstall service from system: %v\n", err)
+		// Always show error, not just in verbose mode
+		fmt.Fprintf(os.Stderr, "Warning: failed to uninstall service from system: %v\n", err)
+		// Continue to remove from config anyway
+	}
+
+	// Remove script file if it exists (created by write/edit command)
+	scriptsDir := c.cfg.GetScriptsDir()
+	var ext string
+	switch runtime.GOOS {
+	case "windows":
+		ext = ".bat"
+	case "darwin", "linux":
+		ext = ".sh"
+	default:
+		ext = ".sh"
+	}
+	scriptPath := filepath.Join(scriptsDir, fmt.Sprintf("%s%s", name, ext))
+	
+	// Check if the service command points to this script (created by write/edit)
+	if svc.Command == scriptPath || strings.HasSuffix(svc.Command, scriptPath) {
+		if err := os.Remove(scriptPath); err != nil && !os.IsNotExist(err) {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to remove script file: %v\n", err)
+			}
 		}
 	}
 

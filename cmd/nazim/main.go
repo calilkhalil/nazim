@@ -40,6 +40,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"nazim/internal/cli"
@@ -133,7 +134,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "nazim: remove requires a service name\n")
 			return exitError
 		}
-		if err := cliHandler.Remove(ctx, cmdArgs[0], verbose); err != nil {
+		// Join all remaining args to support service names with spaces
+		serviceName := strings.Join(cmdArgs, " ")
+		if err := cliHandler.Remove(ctx, serviceName, verbose); err != nil {
 			fmt.Fprintf(stderr, "nazim: %v\n", err)
 			return exitError
 		}
@@ -144,7 +147,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "nazim: start requires a service name\n")
 			return exitError
 		}
-		if err := cliHandler.Start(ctx, cmdArgs[0], verbose); err != nil {
+		// Join all remaining args to support service names with spaces
+		serviceName := strings.Join(cmdArgs, " ")
+		if err := cliHandler.Start(ctx, serviceName, verbose); err != nil {
 			fmt.Fprintf(stderr, "nazim: %v\n", err)
 			return exitError
 		}
@@ -155,7 +160,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "nazim: stop requires a service name\n")
 			return exitError
 		}
-		if err := cliHandler.Stop(ctx, cmdArgs[0], verbose); err != nil {
+		// Join all remaining args to support service names with spaces
+		serviceName := strings.Join(cmdArgs, " ")
+		if err := cliHandler.Stop(ctx, serviceName, verbose); err != nil {
 			fmt.Fprintf(stderr, "nazim: %v\n", err)
 			return exitError
 		}

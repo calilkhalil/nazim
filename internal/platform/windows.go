@@ -247,38 +247,79 @@ func escapeWindowsPath(path string) string {
 
 // Uninstall removes a service from Windows.
 func (m *WindowsManager) Uninstall(name string) error {
-	// Check for admin privileges (needed for system tasks)
-	if !isAdmin() {
-		// For uninstall, we can try without elevation first
-		// If it fails due to permissions, we'll request elevation
-		taskName := fmt.Sprintf("Nazim_%s", name)
+	// Try both with and without spaces, as Task Scheduler may normalize names
+	taskNameWithSpace := fmt.Sprintf("Nazim_%s", name)
+	taskNameNoSpace := fmt.Sprintf("Nazim_%s", strings.ReplaceAll(name, " ", ""))
+
+	// Function to try deleting a task
+	tryDelete := func(taskName string) (bool, error) {
 		cmd := exec.Command("schtasks", "/delete", "/tn", taskName, "/f")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			// If error is about permissions, request elevation
-			if strings.Contains(string(output), "access is denied") || strings.Contains(string(output), "privileges") {
+			outputStr := strings.ToLower(string(output))
+			// If task doesn't exist, that's okay (already deleted or never existed)
+			if strings.Contains(outputStr, "does not exist") ||
+				strings.Contains(outputStr, "cannot find") ||
+				strings.Contains(outputStr, "not found") {
+				return false, nil // Task not found, but not an error
+			}
+			// If error is about permissions, we need elevation
+			if strings.Contains(outputStr, "access is denied") || strings.Contains(outputStr, "privileges") {
+				return false, fmt.Errorf("access is denied")
+			}
+			return false, fmt.Errorf("failed to delete task: %s: %w", string(output), err)
+		}
+		return true, nil // Successfully deleted
+	}
+
+	// Check for admin privileges (needed for system tasks)
+	if !isAdmin() {
+		// Try to delete with original name first
+		deleted, err := tryDelete(taskNameWithSpace)
+		if err != nil {
+			// If permission error, request elevation
+			if strings.Contains(err.Error(), "access is denied") {
 				if err := checkAdminOrElevate(); err != nil {
 					return fmt.Errorf("administrator privileges required: %w", err)
 				}
 				return nil // Process will exit and restart elevated
 			}
-			// Ignorar erro se a tarefa não existir
-			if !strings.Contains(string(output), "does not exist") {
-				return fmt.Errorf("failed to delete task: %s: %w", string(output), err)
-			}
+			return err
 		}
+		if deleted {
+			return nil // Successfully deleted
+		}
+
+		// Try without spaces (Task Scheduler may have normalized it)
+		deleted, err = tryDelete(taskNameNoSpace)
+		if err != nil {
+			if strings.Contains(err.Error(), "access is denied") {
+				if err := checkAdminOrElevate(); err != nil {
+					return fmt.Errorf("administrator privileges required: %w", err)
+				}
+				return nil // Process will exit and restart elevated
+			}
+			return err
+		}
+		// If neither was found, that's okay (maybe already deleted)
 		return nil
 	}
 
-	taskName := fmt.Sprintf("Nazim_%s", name)
-	cmd := exec.Command("schtasks", "/delete", "/tn", taskName, "/f")
-	output, err := cmd.CombinedOutput()
+	// We have admin privileges, try both names
+	deleted, err := tryDelete(taskNameWithSpace)
 	if err != nil {
-		// Ignorar erro se a tarefa não existir
-		if !strings.Contains(string(output), "does not exist") {
-			return fmt.Errorf("failed to delete task: %s: %w", string(output), err)
-		}
+		return err
 	}
+	if deleted {
+		return nil // Successfully deleted
+	}
+
+	// Try without spaces
+	deleted, err = tryDelete(taskNameNoSpace)
+	if err != nil {
+		return err
+	}
+	// If neither was found, that's okay (maybe already deleted)
 	return nil
 }
 
