@@ -140,10 +140,9 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 	
 	hasInterval := svc.GetInterval() > 0
 	hasStartup := svc.OnStartup
-	needsElevation := hasStartup || hasInterval
 	
 	var commandWithLogs string
-	if needsElevation {
+	if hasStartup {
 		escapedCommand := strings.ReplaceAll(command, `\`, `\\`)
 		escapedCommand = strings.ReplaceAll(escapedCommand, `"`, `\"`)
 		escapedLogPathForPS := strings.ReplaceAll(logPath, `\`, `\\`)
@@ -163,7 +162,7 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 	}
 
 	if svc.WorkDir != "" {
-		if needsElevation {
+		if hasStartup {
 			escapedWorkDir := strings.ReplaceAll(svc.WorkDir, `\`, `\\`)
 			escapedWorkDir = strings.ReplaceAll(escapedWorkDir, `"`, `\"`)
 			escapedCommand := strings.ReplaceAll(command, `\`, `\\`)
@@ -186,6 +185,7 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 				args = append(args, "/ri", fmt.Sprintf("%d", minutes))
 			} else {
 				args = append(args, "/sc", "minute", "/mo", fmt.Sprintf("%d", minutes))
+				args = append(args, "/rl", "HIGHEST")
 			}
 		}
 	} else if hasStartup {
