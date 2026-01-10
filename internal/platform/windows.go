@@ -7,7 +7,9 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"syscall"
 
+	"golang.org/x/sys/windows"
 	"nazim/internal/service"
 )
 
@@ -20,21 +22,28 @@ func NewWindowsManager() *WindowsManager {
 }
 
 // isAdmin checks if the current process is running with administrator privileges.
-// It does this by attempting to query a system task, which requires admin privileges.
+// Uses windows.GetCurrentProcessToken().IsElevated() which is more reliable than
+// trying to query system tasks or open protected files.
 func isAdmin() bool {
 	if runtime.GOOS != "windows" {
 		return false
 	}
 
-	// Try to query a system-level task (requires admin)
-	// This is a lightweight check that doesn't require external dependencies
-	cmd := exec.Command("schtasks", "/query", "/tn", "\\Microsoft\\Windows\\Defrag\\ScheduledDefrag")
-	err := cmd.Run()
-	// If we can query system tasks, we have admin privileges
-	return err == nil
+	// Use the Windows API to check if the current process token is elevated
+	// This is more reliable than trying to query tasks or open protected files
+	token := windows.GetCurrentProcessToken()
+	elevated, err := token.IsElevated()
+	if err != nil {
+		// If we can't check, assume not elevated for safety
+		return false
+	}
+	
+	return elevated
 }
 
 // requestElevation attempts to re-run the current process with administrator privileges.
+// Uses Windows ShellExecute API with "runas" verb which directly triggers UAC prompt.
+// This is more reliable than using PowerShell.
 func requestElevation() error {
 	if runtime.GOOS != "windows" {
 		return fmt.Errorf("elevation is only supported on Windows")
@@ -46,54 +55,60 @@ func requestElevation() error {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
-	// Get command line arguments
-	args := os.Args[1:]
-	
-	// Build PowerShell array syntax for arguments
-	// This is more reliable than passing as a single string
-	var argArrayParts []string
-	for _, arg := range args {
-		// Escape single quotes for PowerShell and wrap in single quotes
-		escaped := strings.ReplaceAll(arg, `'`, `''`)
-		argArrayParts = append(argArrayParts, fmt.Sprintf(`'%s'`, escaped))
-	}
-	argArrayStr := strings.Join(argArrayParts, ",")
-
-	// Use PowerShell to request elevation
-	// The -Verb RunAs will trigger UAC prompt
-	// Pass arguments as a PowerShell array for better reliability
-	psCmd := fmt.Sprintf(
-		`$proc = Start-Process -FilePath '%s' -ArgumentList @(%s) -Verb RunAs -PassThru -Wait; if ($proc) { exit $proc.ExitCode } else { exit 1 }`,
-		strings.ReplaceAll(exe, `'`, `''`), argArrayStr,
-	)
-
-	psArgs := []string{
-		"-NoProfile",
-		"-ExecutionPolicy", "Bypass",
-		"-Command", psCmd,
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "" // Use empty string if we can't get CWD
 	}
 
-	cmd := exec.Command("powershell", psArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
+	// Get command line arguments and join them
+	args := strings.Join(os.Args[1:], " ")
 
-	// Run and wait for completion
-	// If user cancels UAC, this will return an error
-	if err := cmd.Run(); err != nil {
-		// Check if it's a cancellation (user denied UAC)
-		if exitError, ok := err.(*exec.ExitError); ok {
-			exitCode := exitError.ExitCode()
-			if exitCode == 1 || exitCode == 1223 {
-				// 1223 is ERROR_CANCELLED in Windows
-				return fmt.Errorf("elevation was cancelled or denied - please approve the UAC prompt to continue")
+	// Convert strings to UTF16 pointers for Windows API
+	verbPtr, err := syscall.UTF16PtrFromString("runas")
+	if err != nil {
+		return fmt.Errorf("failed to convert verb to UTF16: %w", err)
+	}
+
+	exePtr, err := syscall.UTF16PtrFromString(exe)
+	if err != nil {
+		return fmt.Errorf("failed to convert executable path to UTF16: %w", err)
+	}
+
+	var argPtr *uint16
+	if args != "" {
+		argPtr, err = syscall.UTF16PtrFromString(args)
+		if err != nil {
+			return fmt.Errorf("failed to convert arguments to UTF16: %w", err)
+		}
+	}
+
+	var cwdPtr *uint16
+	if cwd != "" {
+		cwdPtr, err = syscall.UTF16PtrFromString(cwd)
+		if err != nil {
+			return fmt.Errorf("failed to convert working directory to UTF16: %w", err)
+		}
+	}
+
+	// SW_NORMAL = 1 (show window normally)
+	var showCmd int32 = 1
+
+	// Use ShellExecute with "runas" verb to trigger UAC prompt
+	err = windows.ShellExecute(0, verbPtr, exePtr, argPtr, cwdPtr, showCmd)
+	if err != nil {
+		// Check for specific error codes
+		if errno, ok := err.(syscall.Errno); ok {
+			if errno == 1223 {
+				// ERROR_CANCELLED - user cancelled UAC prompt
+				return fmt.Errorf("elevation was cancelled - please approve the UAC prompt to continue")
 			}
 		}
 		return fmt.Errorf("failed to elevate privileges: %w", err)
 	}
 
-	// If we get here, the elevated process completed successfully
-	// Exit this non-elevated process
+	// If elevation was successful, exit this non-elevated process
+	// The elevated process will continue execution
 	os.Exit(0)
 	return nil
 }
