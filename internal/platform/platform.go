@@ -26,7 +26,7 @@ func normalizeServiceName(name string) string {
 	normalized = strings.ReplaceAll(normalized, "<", "")
 	normalized = strings.ReplaceAll(normalized, ">", "")
 	normalized = strings.ReplaceAll(normalized, "|", "")
-	
+
 	return normalized
 }
 

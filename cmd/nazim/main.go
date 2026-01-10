@@ -87,7 +87,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Parse flags from remaining args
+	remainingArgs = preprocessArgs(remainingArgs, command)
 	flags, cmdArgs, err := parseFlags(remainingArgs)
 	if err != nil {
 		fmt.Fprintf(stderr, "nazim: %v\n", err)
@@ -105,150 +105,157 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	cliHandler := cli.New(cfg)
 
-	// Route to appropriate command
+	return handleCommand(ctx, command, flags, cmdArgs, cliHandler, verbose, stderr)
+}
+
+func handleCommand(ctx context.Context, command string, flags *Flags, cmdArgs []string, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
 	switch command {
 	case "add":
-		if flags.Name != "" && len(cmdArgs) > 0 {
-			allAreNameParts := true
-			for _, arg := range cmdArgs {
-				if strings.HasPrefix(arg, "-") {
-					allAreNameParts = false
-					break
-				}
-			}
-			if allAreNameParts {
-				flags.Name = flags.Name + " " + strings.Join(cmdArgs, " ")
-			}
-		} else if flags.Name == "" && len(cmdArgs) > 0 {
-			if !strings.HasPrefix(cmdArgs[0], "-") {
-				flags.Name = strings.Join(cmdArgs, " ")
-			}
-		}
-		addFlags := &cli.Flags{
-			Name:      flags.Name,
-			Command:   flags.Command,
-			Args:      flags.Args,
-			WorkDir:   flags.WorkDir,
-			OnStartup: flags.OnStartup,
-			Interval:  flags.Interval,
-		}
-		if err := cliHandler.Add(ctx, addFlags, verbose); err != nil {
-			fmt.Fprintf(stderr, "nazim: %v\n", err)
-			return exitError
-		}
-		return exitOK
-
+		return handleAdd(ctx, flags, cliHandler, verbose, stderr)
 	case "list":
-		if err := cliHandler.List(ctx, verbose); err != nil {
-			fmt.Fprintf(stderr, "nazim: %v\n", err)
-			return exitError
-		}
-		return exitOK
-
+		return handleList(ctx, cliHandler, verbose, stderr)
 	case "remove":
-		if len(cmdArgs) == 0 {
-			fmt.Fprintf(stderr, "nazim: remove requires a service name\n")
-			return exitError
-		}
-		// Join all remaining args to support service names with spaces
-		serviceName := strings.Join(cmdArgs, " ")
-		if err := cliHandler.Remove(ctx, serviceName, verbose); err != nil {
-			fmt.Fprintf(stderr, "nazim: %v\n", err)
-			return exitError
-		}
-		return exitOK
-
+		return handleRemove(ctx, cmdArgs, cliHandler, verbose, stderr)
 	case "start":
-		if len(cmdArgs) == 0 {
-			fmt.Fprintf(stderr, "nazim: start requires a service name\n")
-			return exitError
-		}
-		// Join all remaining args to support service names with spaces
-		serviceName := strings.Join(cmdArgs, " ")
-		if err := cliHandler.Start(ctx, serviceName, verbose); err != nil {
-			fmt.Fprintf(stderr, "nazim: %v\n", err)
-			return exitError
-		}
-		return exitOK
-
+		return handleStart(ctx, cmdArgs, cliHandler, verbose, stderr)
 	case "stop":
-		if len(cmdArgs) == 0 {
-			fmt.Fprintf(stderr, "nazim: stop requires a service name\n")
-			return exitError
-		}
-		// Join all remaining args to support service names with spaces
-		serviceName := strings.Join(cmdArgs, " ")
-		if err := cliHandler.Stop(ctx, serviceName, verbose); err != nil {
-			fmt.Fprintf(stderr, "nazim: %v\n", err)
-			return exitError
-		}
-		return exitOK
-
+		return handleStop(ctx, cmdArgs, cliHandler, verbose, stderr)
 	case "status", "info":
-		if len(cmdArgs) == 0 {
-			fmt.Fprintf(stderr, "nazim: %s requires a service name\n", command)
-			return exitError
-		}
-		// Join all remaining args to support service names with spaces
-		serviceName := strings.Join(cmdArgs, " ")
-		if err := cliHandler.Status(ctx, serviceName, verbose); err != nil {
-			fmt.Fprintf(stderr, "nazim: %v\n", err)
-			return exitError
-		}
-		return exitOK
-
+		return handleStatus(ctx, command, cmdArgs, cliHandler, verbose, stderr)
 	case "edit":
-		if len(cmdArgs) == 0 {
-			fmt.Fprintf(stderr, "nazim: edit requires a service name\n")
-			return exitError
-		}
-		// Join all remaining args to support service names with spaces
-		serviceName := strings.Join(cmdArgs, " ")
-		editFlags := &cli.Flags{
-			Name:      flags.Name,
-			Command:   flags.Command,
-			Args:      flags.Args,
-			WorkDir:   flags.WorkDir,
-			OnStartup: flags.OnStartup,
-			Interval:  flags.Interval,
-		}
-		if err := cliHandler.Edit(ctx, serviceName, editFlags, verbose); err != nil {
-			fmt.Fprintf(stderr, "nazim: %v\n", err)
-			return exitError
-		}
-		return exitOK
-
+		return handleEdit(ctx, cmdArgs, flags, cliHandler, verbose, stderr)
 	case "enable":
-		if len(cmdArgs) == 0 {
-			fmt.Fprintf(stderr, "nazim: enable requires a service name\n")
-			return exitError
-		}
-		// Join all remaining args to support service names with spaces
-		serviceName := strings.Join(cmdArgs, " ")
-		if err := cliHandler.Enable(ctx, serviceName, verbose); err != nil {
-			fmt.Fprintf(stderr, "nazim: %v\n", err)
-			return exitError
-		}
-		return exitOK
-
+		return handleEnable(ctx, cmdArgs, cliHandler, verbose, stderr)
 	case "disable":
-		if len(cmdArgs) == 0 {
-			fmt.Fprintf(stderr, "nazim: disable requires a service name\n")
-			return exitError
-		}
-		// Join all remaining args to support service names with spaces
-		serviceName := strings.Join(cmdArgs, " ")
-		if err := cliHandler.Disable(ctx, serviceName, verbose); err != nil {
-			fmt.Fprintf(stderr, "nazim: %v\n", err)
-			return exitError
-		}
-		return exitOK
-
+		return handleDisable(ctx, cmdArgs, cliHandler, verbose, stderr)
 	default:
 		fmt.Fprintf(stderr, "nazim: unknown command: %s\n", command)
 		printUsage(stderr)
 		return exitError
 	}
+}
+
+func handleAdd(ctx context.Context, flags *Flags, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
+	addFlags := &cli.Flags{
+		Name:      flags.Name,
+		Command:   flags.Command,
+		Args:      flags.Args,
+		WorkDir:   flags.WorkDir,
+		OnStartup: flags.OnStartup,
+		Interval:  flags.Interval,
+	}
+	if err := cliHandler.Add(ctx, addFlags, verbose); err != nil {
+		fmt.Fprintf(stderr, "nazim: %v\n", err)
+		return exitError
+	}
+	return exitOK
+}
+
+func handleList(ctx context.Context, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
+	if err := cliHandler.List(ctx, verbose); err != nil {
+		fmt.Fprintf(stderr, "nazim: %v\n", err)
+		return exitError
+	}
+	return exitOK
+}
+
+func handleRemove(ctx context.Context, cmdArgs []string, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
+	if len(cmdArgs) == 0 {
+		fmt.Fprintf(stderr, "nazim: remove requires a service name\n")
+		return exitError
+	}
+	serviceName := strings.Join(cmdArgs, " ")
+	if err := cliHandler.Remove(ctx, serviceName, verbose); err != nil {
+		fmt.Fprintf(stderr, "nazim: %v\n", err)
+		return exitError
+	}
+	return exitOK
+}
+
+func handleStart(ctx context.Context, cmdArgs []string, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
+	if len(cmdArgs) == 0 {
+		fmt.Fprintf(stderr, "nazim: start requires a service name\n")
+		return exitError
+	}
+	serviceName := strings.Join(cmdArgs, " ")
+	if err := cliHandler.Start(ctx, serviceName, verbose); err != nil {
+		fmt.Fprintf(stderr, "nazim: %v\n", err)
+		return exitError
+	}
+	return exitOK
+}
+
+func handleStop(ctx context.Context, cmdArgs []string, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
+	if len(cmdArgs) == 0 {
+		fmt.Fprintf(stderr, "nazim: stop requires a service name\n")
+		return exitError
+	}
+	serviceName := strings.Join(cmdArgs, " ")
+	if err := cliHandler.Stop(ctx, serviceName, verbose); err != nil {
+		fmt.Fprintf(stderr, "nazim: %v\n", err)
+		return exitError
+	}
+	return exitOK
+}
+
+func handleStatus(ctx context.Context, command string, cmdArgs []string, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
+	if len(cmdArgs) == 0 {
+		fmt.Fprintf(stderr, "nazim: %s requires a service name\n", command)
+		return exitError
+	}
+	serviceName := strings.Join(cmdArgs, " ")
+	if err := cliHandler.Status(ctx, serviceName, verbose); err != nil {
+		fmt.Fprintf(stderr, "nazim: %v\n", err)
+		return exitError
+	}
+	return exitOK
+}
+
+func handleEdit(ctx context.Context, cmdArgs []string, flags *Flags, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
+	if len(cmdArgs) == 0 {
+		fmt.Fprintf(stderr, "nazim: edit requires a service name\n")
+		return exitError
+	}
+	serviceName := strings.Join(cmdArgs, " ")
+	editFlags := &cli.Flags{
+		Name:      flags.Name,
+		Command:   flags.Command,
+		Args:      flags.Args,
+		WorkDir:   flags.WorkDir,
+		OnStartup: flags.OnStartup,
+		Interval:  flags.Interval,
+	}
+	if err := cliHandler.Edit(ctx, serviceName, editFlags, verbose); err != nil {
+		fmt.Fprintf(stderr, "nazim: %v\n", err)
+		return exitError
+	}
+	return exitOK
+}
+
+func handleEnable(ctx context.Context, cmdArgs []string, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
+	if len(cmdArgs) == 0 {
+		fmt.Fprintf(stderr, "nazim: enable requires a service name\n")
+		return exitError
+	}
+	serviceName := strings.Join(cmdArgs, " ")
+	if err := cliHandler.Enable(ctx, serviceName, verbose); err != nil {
+		fmt.Fprintf(stderr, "nazim: %v\n", err)
+		return exitError
+	}
+	return exitOK
+}
+
+func handleDisable(ctx context.Context, cmdArgs []string, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
+	if len(cmdArgs) == 0 {
+		fmt.Fprintf(stderr, "nazim: disable requires a service name\n")
+		return exitError
+	}
+	serviceName := strings.Join(cmdArgs, " ")
+	if err := cliHandler.Disable(ctx, serviceName, verbose); err != nil {
+		fmt.Fprintf(stderr, "nazim: %v\n", err)
+		return exitError
+	}
+	return exitOK
 }
 
 func parseFlags(args []string) (*Flags, []string, error) {
@@ -281,6 +288,34 @@ func parseFlags(args []string) (*Flags, []string, error) {
 	}
 
 	return flags, fs.Args(), nil
+}
+
+func preprocessArgs(args []string, command string) []string {
+	if command != "add" {
+		return args
+	}
+	result := make([]string, 0, len(args))
+	i := 0
+	for i < len(args) {
+		if args[i] == "--name" || args[i] == "-n" {
+			result = append(result, args[i])
+			i++
+			if i < len(args) && !strings.HasPrefix(args[i], "-") {
+				var nameParts []string
+				nameParts = append(nameParts, args[i])
+				i++
+				for i < len(args) && !strings.HasPrefix(args[i], "-") {
+					nameParts = append(nameParts, args[i])
+					i++
+				}
+				result = append(result, strings.Join(nameParts, " "))
+			}
+		} else {
+			result = append(result, args[i])
+			i++
+		}
+	}
+	return result
 }
 
 func printUsage(w io.Writer) {
