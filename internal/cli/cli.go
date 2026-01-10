@@ -430,8 +430,6 @@ func createUnixTemplate(serviceName string) string {
 # ============================================================================
 # Write your service logic below this line:
 
-echo "Service %s is running..."
-
 # Example commands you can use:
 # - Run a backup: tar -czf backup.tar.gz /path/to/data
 # - Process files: find /path -name "*.log" -exec process.sh {} \;
@@ -446,7 +444,7 @@ echo "Service %s is running..."
 
 # Exit with status code (0 = success, non-zero = failure)
 exit 0
-`, serviceName, time.Now().Format("2006-01-02 15:04:05"), serviceName, serviceName)
+`, serviceName, time.Now().Format("2006-01-02 15:04:05"), serviceName)
 }
 
 // createWindowsTemplate creates a template for Windows systems.
@@ -468,8 +466,6 @@ REM YOUR CODE HERE
 REM ============================================================================
 REM Write your service logic below this line:
 
-echo Service %s is running...
-
 REM Example commands you can use:
 REM - Run a backup: xcopy "C:\data" "D:\backup" /E /I /Y
 REM - Process files: for %%f in (C:\logs\*.log) do process.bat "%%f"
@@ -484,5 +480,5 @@ REM ============================================================================
 
 REM Exit with status code (0 = success, non-zero = failure)
 exit /b 0
-`, serviceName, time.Now().Format("2006-01-02 15:04:05"), serviceName, serviceName)
+`, serviceName, time.Now().Format("2006-01-02 15:04:05"), serviceName)
 }
