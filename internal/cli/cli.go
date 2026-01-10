@@ -551,7 +551,7 @@ func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string
 	}
 
 	// Wait for Notepad to close
-	_ = cmd.Process.Wait() // Ignore error, process may have already exited
+	_, _ = cmd.Process.Wait() // Ignore error and state, process may have already exited
 
 	// Verify file was created and has content
 	info, err := os.Stat(scriptPath)
