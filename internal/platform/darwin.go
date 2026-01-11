@@ -114,33 +114,45 @@ func (m *DarwinManager) Uninstall(name string) error {
 	return nil
 }
 
-// Start starts a service on macOS.
-func (m *DarwinManager) Start(name string) error {
+// Enable enables a service on macOS (loads the launchd agent).
+func (m *DarwinManager) Enable(name string) error {
+	normalizedName := normalizeServiceName(name)
+	plistPath := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
+
+	cmd := exec.Command("launchctl", "load", plistPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to enable service: %s: %w", string(output), err)
+	}
+	return nil
+}
+
+// Disable disables a service on macOS (unloads the launchd agent).
+func (m *DarwinManager) Disable(name string) error {
+	normalizedName := normalizeServiceName(name)
+	plistPath := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
+
+	cmd := exec.Command("launchctl", "unload", plistPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		outputStr := strings.ToLower(string(output))
+		if strings.Contains(outputStr, "could not find service") {
+			return nil
+		}
+		return fmt.Errorf("failed to disable service: %s: %w", string(output), err)
+	}
+	return nil
+}
+
+// Run executes a service immediately on macOS.
+func (m *DarwinManager) Run(name string) error {
 	normalizedName := normalizeServiceName(name)
 	label := fmt.Sprintf("com.nazim.%s", normalizedName)
 
 	cmd := exec.Command("launchctl", "start", label)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to start service: %s: %w", string(output), err)
-	}
-	return nil
-}
-
-// Stop stops a service on macOS.
-func (m *DarwinManager) Stop(name string) error {
-	// Use normalized name (spaces removed) for consistency
-	normalizedName := normalizeServiceName(name)
-	label := fmt.Sprintf("com.nazim.%s", normalizedName)
-
-	cmd := exec.Command("launchctl", "stop", label)
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			outputStr := strings.ToLower(string(output))
-			if strings.Contains(outputStr, "could not find service") {
-				return nil
-			}
-		return fmt.Errorf("failed to stop service: %s: %w", string(output), err)
+		return fmt.Errorf("failed to run service: %s: %w", string(output), err)
 	}
 	return nil
 }
@@ -152,4 +164,31 @@ func (m *DarwinManager) IsInstalled(name string) (bool, error) {
 
 	_, err := os.Stat(plistFile)
 	return err == nil, nil
+}
+
+// GetTaskState returns the state of a launchd agent ("Enabled" or "Disabled").
+// Returns error if agent is not found.
+func (m *DarwinManager) GetTaskState(name string) (string, error) {
+	normalizedName := normalizeServiceName(name)
+	label := fmt.Sprintf("com.nazim.%s", normalizedName)
+
+	// Check if agent is loaded (enabled)
+	cmd := exec.Command("launchctl", "list")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to query launchd: %w", err)
+	}
+
+	// If the label appears in the list, it's loaded (enabled)
+	if strings.Contains(string(output), label) {
+		return "Enabled", nil
+	}
+
+	// Check if plist file exists (installed but not loaded = disabled)
+	plistFile := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
+	if _, err := os.Stat(plistFile); err == nil {
+		return "Disabled", nil
+	}
+
+	return "", fmt.Errorf("agent not found")
 }

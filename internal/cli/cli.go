@@ -139,12 +139,15 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 
 	rows := make([]rowData, 0, len(services))
 	for _, svc := range services {
-		installed, err := platformMgr.IsInstalled(svc.Name)
-		status := "Not Installed"
-		if installed {
-			status = "Installed"
-		} else if err != nil {
-			status = "Unknown"
+		// Get task state (Enabled/Disabled)
+		state, err := platformMgr.GetTaskState(svc.Name)
+		status := state
+		if err != nil {
+			// If task not found, skip this service (it shouldn't be in the list)
+			if verbose {
+				fmt.Fprintf(os.Stderr, "Warning: service '%s' not found in system, skipping...\n", svc.Name)
+			}
+			continue
 		}
 
 		svcType := ""
@@ -172,6 +175,12 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 			svcType: svcType,
 			status:  status,
 		})
+	}
+
+	// If no valid services found, show message
+	if len(rows) == 0 {
+		fmt.Println("No services found.")
+		return nil
 	}
 
 	const maxCmdDisplay = 50
@@ -219,27 +228,40 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 	}
 
 	fmt.Println(headerSeparator)
-	fmt.Printf("\nTotal: %d service(s)\n", len(services))
+	fmt.Printf("\nTotal: %d service(s)\n", len(rows))
 
 	return nil
 }
 
-// Remove removes a service completely (from system, config, and scripts).
+// Remove removes a service completely (from system, config, scripts, and logs).
 func (c *CLI) Remove(ctx context.Context, name string, verbose bool) error {
-	svc, err := c.cfg.GetService(name)
-	if err != nil {
+	if _, err := c.cfg.GetService(name); err != nil {
 		return fmt.Errorf("service '%s' does not exist", name)
 	}
 
+	var removalErrors []string
+
+	// 1. Remove from platform (Task Scheduler, systemd, launchd)
 	platformMgr, err := platform.NewManager()
 	if err != nil {
 		return fmt.Errorf("failed to create platform manager: %w", err)
 	}
 
 	if err := platformMgr.Uninstall(name); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to uninstall service from system: %v\n", err)
+		// Check if elevation was triggered
+		if strings.Contains(err.Error(), "Elevated process will handle") {
+			// Elevation was triggered - stop here, elevated process will handle everything
+			// Don't show error, just exit silently (elevated process will show success)
+			return nil
+		}
+		// Other errors are warnings
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to uninstall from system: %v\n", err)
+		}
+		removalErrors = append(removalErrors, fmt.Sprintf("system uninstall: %v", err))
 	}
 
+	// 2. Remove script file (always attempt, regardless of svc.Command)
 	scriptsDir := c.cfg.GetScriptsDir()
 	var ext string
 	switch runtime.GOOS {
@@ -252,24 +274,71 @@ func (c *CLI) Remove(ctx context.Context, name string, verbose bool) error {
 	}
 	scriptPath := filepath.Join(scriptsDir, fmt.Sprintf("%s%s", name, ext))
 
-	if svc.Command == scriptPath || strings.HasSuffix(svc.Command, scriptPath) {
-		if err := os.Remove(scriptPath); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(scriptPath); err != nil && !os.IsNotExist(err) {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to remove script file: %v\n", err)
+		}
+		removalErrors = append(removalErrors, fmt.Sprintf("script file: %v", err))
+	} else if err == nil {
+		if verbose {
+			fmt.Printf("Removed script file: %s\n", scriptPath)
+		}
+	}
+
+	// 3. Remove log file
+	logsDir := c.cfg.GetLogsDir()
+	logPath := filepath.Join(logsDir, fmt.Sprintf("%s.log", name))
+
+	if err := os.Remove(logPath); err != nil && !os.IsNotExist(err) {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to remove log file: %v\n", err)
+		}
+		removalErrors = append(removalErrors, fmt.Sprintf("log file: %v", err))
+	} else if err == nil {
+		if verbose {
+			fmt.Printf("Removed log file: %s\n", logPath)
+		}
+	}
+
+	// 4. Log removal with timestamp
+	removalLogPath := filepath.Join(logsDir, "removals.log")
+	logEntry := fmt.Sprintf("%s - Service '%s' removed\n",
+		time.Now().Format("2006-01-02 15:04:05"), name)
+
+	f, err := os.OpenFile(removalLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to log removal: %v\n", err)
+		}
+	} else {
+		defer f.Close()
+		if _, err := f.WriteString(logEntry); err != nil {
 			if verbose {
-				fmt.Fprintf(os.Stderr, "Warning: failed to remove script file: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Warning: failed to write removal log: %v\n", err)
 			}
 		}
 	}
 
+	// 5. Remove from config
 	if err := c.cfg.RemoveService(name); err != nil {
-		return fmt.Errorf("failed to remove service: %w", err)
+		return fmt.Errorf("failed to remove service from config: %w", err)
 	}
 
-	fmt.Printf("Service '%s' removed successfully!\n", name)
+	// Report results
+	if len(removalErrors) > 0 {
+		fmt.Printf("Service '%s' removed from config with warnings:\n", name)
+		for _, e := range removalErrors {
+			fmt.Printf("  - %s\n", e)
+		}
+	} else {
+		fmt.Printf("Service '%s' removed successfully!\n", name)
+	}
+
 	return nil
 }
 
-// Start starts a service.
-func (c *CLI) Start(ctx context.Context, name string, verbose bool) error {
+// Enable enables a service (allows it to run on schedule).
+func (c *CLI) Enable(ctx context.Context, name string, verbose bool) error {
 	if _, err := c.cfg.GetService(name); err != nil {
 		return fmt.Errorf("service '%s' does not exist", name)
 	}
@@ -279,16 +348,21 @@ func (c *CLI) Start(ctx context.Context, name string, verbose bool) error {
 		return fmt.Errorf("failed to create platform manager: %w", err)
 	}
 
-	if err := platformMgr.Start(name); err != nil {
-		return fmt.Errorf("failed to start service: %w", err)
+	if err := platformMgr.Enable(name); err != nil {
+		// Check if elevated process is handling it
+		if strings.Contains(err.Error(), "Elevated process will handle") {
+			// UAC was triggered, elevated process will show success message
+			return nil
+		}
+		return fmt.Errorf("failed to enable service: %w", err)
 	}
 
-	fmt.Printf("Service '%s' started successfully!\n", name)
+	fmt.Printf("Service '%s' enabled successfully!\n", name)
 	return nil
 }
 
-// Stop stops a service.
-func (c *CLI) Stop(ctx context.Context, name string, verbose bool) error {
+// Disable disables a service (prevents it from running on schedule).
+func (c *CLI) Disable(ctx context.Context, name string, verbose bool) error {
 	if _, err := c.cfg.GetService(name); err != nil {
 		return fmt.Errorf("service '%s' does not exist", name)
 	}
@@ -298,11 +372,35 @@ func (c *CLI) Stop(ctx context.Context, name string, verbose bool) error {
 		return fmt.Errorf("failed to create platform manager: %w", err)
 	}
 
-	if err := platformMgr.Stop(name); err != nil {
-		return fmt.Errorf("failed to stop service: %w", err)
+	if err := platformMgr.Disable(name); err != nil {
+		// Check if elevated process is handling it
+		if strings.Contains(err.Error(), "Elevated process will handle") {
+			// UAC was triggered, elevated process will show success message
+			return nil
+		}
+		return fmt.Errorf("failed to disable service: %w", err)
 	}
 
-	fmt.Printf("Service '%s' stopped successfully!\n", name)
+	fmt.Printf("Service '%s' disabled successfully!\n", name)
+	return nil
+}
+
+// Run executes a service immediately (independent of schedule).
+func (c *CLI) Run(ctx context.Context, name string, verbose bool) error {
+	if _, err := c.cfg.GetService(name); err != nil {
+		return fmt.Errorf("service '%s' does not exist", name)
+	}
+
+	platformMgr, err := platform.NewManager()
+	if err != nil {
+		return fmt.Errorf("failed to create platform manager: %w", err)
+	}
+
+	if err := platformMgr.Run(name); err != nil {
+		return fmt.Errorf("failed to run service: %w", err)
+	}
+
+	fmt.Printf("Service '%s' is now running!\n", name)
 	return nil
 }
 
@@ -445,68 +543,6 @@ func (c *CLI) Edit(ctx context.Context, name string, flags *Flags, verbose bool)
 }
 
 
-// Enable enables a service.
-func (c *CLI) Enable(ctx context.Context, name string, verbose bool) error {
-	svc, err := c.cfg.GetService(name)
-	if err != nil {
-		return fmt.Errorf("service '%s' does not exist", name)
-	}
-
-	if svc.Enabled {
-		fmt.Printf("Service '%s' is already enabled.\n", name)
-		return nil
-	}
-
-	svc.Enabled = true
-	if err := c.cfg.UpdateService(svc); err != nil {
-		return fmt.Errorf("failed to enable service: %w", err)
-	}
-
-	platformMgr, err := platform.NewManager()
-	if err != nil {
-		return fmt.Errorf("failed to create platform manager: %w", err)
-	}
-
-	if err := platformMgr.Install(svc); err != nil {
-		return fmt.Errorf("failed to reinstall service: %w", err)
-	}
-
-	fmt.Printf("Service '%s' enabled successfully!\n", name)
-	return nil
-}
-
-// Disable disables a service.
-func (c *CLI) Disable(ctx context.Context, name string, verbose bool) error {
-	svc, err := c.cfg.GetService(name)
-	if err != nil {
-		return fmt.Errorf("service '%s' does not exist", name)
-	}
-
-	if !svc.Enabled {
-		fmt.Printf("Service '%s' is already disabled.\n", name)
-		return nil
-	}
-
-	svc.Enabled = false
-	if err := c.cfg.UpdateService(svc); err != nil {
-		return fmt.Errorf("failed to disable service: %w", err)
-	}
-
-	platformMgr, err := platform.NewManager()
-	if err != nil {
-		return fmt.Errorf("failed to create platform manager: %w", err)
-	}
-
-	if err := platformMgr.Uninstall(name); err != nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "Warning: failed to uninstall service: %v\n", err)
-		}
-	}
-
-	fmt.Printf("Service '%s' disabled successfully!\n", name)
-	return nil
-}
-
 func parseDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	
@@ -574,6 +610,15 @@ func (c *CLI) createScriptInteractive(serviceName string, verbose bool) (string,
 	}
 
 	scriptPath := filepath.Join(scriptsDir, fmt.Sprintf("%s%s", serviceName, ext))
+
+	// Check if script already exists from previous execution (e.g., after UAC elevation)
+	if _, err := os.Stat(scriptPath); err == nil {
+		// File exists, use it without opening editor again
+		if verbose {
+			fmt.Printf("Script already exists at %s, using it\n", scriptPath)
+		}
+		return scriptPath, nil
+	}
 
 	editor := getEditor()
 
@@ -787,7 +832,8 @@ func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string
 
 	if saved {
 		time.Sleep(300 * time.Millisecond)
-		closeNotepad(notepadPID)
+		// Use title-based closing for better reliability
+		closeNotepadByTitle(scriptPath)
 	}
 
 	_, _ = cmd.Process.Wait()
@@ -813,10 +859,46 @@ func closeNotepad(pid int) {
 		return
 	}
 
+	// Try graceful close first
 	cmd := exec.Command("taskkill", "/PID", fmt.Sprintf("%d", pid))
 	_ = cmd.Run()
 
-	time.Sleep(200 * time.Millisecond)
-	cmd = exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
+	// Wait for graceful close
+	time.Sleep(500 * time.Millisecond)
+
+	// Check if process still exists
+	checkCmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH")
+	output, _ := checkCmd.Output()
+
+	// If still running, force close
+	if strings.Contains(string(output), fmt.Sprintf("%d", pid)) {
+		forceCmd := exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
+		_ = forceCmd.Run()
+	}
+}
+
+// closeNotepadByTitle closes notepad by window title (more reliable than PID)
+func closeNotepadByTitle(scriptPath string) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+
+	// Extract filename for window title matching
+	filename := filepath.Base(scriptPath)
+
+	// Escape filename for PowerShell (single quotes are safest)
+	escapedFilename := strings.ReplaceAll(filename, "'", "''")
+
+	// Try graceful close first using CloseMainWindow()
+	cmd := exec.Command("powershell", "-NoProfile", "-Command",
+		fmt.Sprintf("Get-Process notepad -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowTitle -like '*%s*'} | ForEach-Object {$_.CloseMainWindow()} | Out-Null", escapedFilename))
 	_ = cmd.Run()
+
+	// Wait for graceful close
+	time.Sleep(500 * time.Millisecond)
+
+	// Force close if still open
+	forceCmd := exec.Command("powershell", "-NoProfile", "-Command",
+		fmt.Sprintf("Get-Process notepad -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowTitle -like '*%s*'} | Stop-Process -Force", escapedFilename))
+	_ = forceCmd.Run()
 }

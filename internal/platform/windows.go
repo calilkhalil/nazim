@@ -51,7 +51,8 @@ func requestElevation() error {
 		cwd = ""
 	}
 
-	args := strings.Join(os.Args[1:], " ")
+	// Properly marshal arguments using Windows escaping rules
+	args := marshalWindowsArgs(os.Args[1:])
 	if args == "" {
 		args = "add"
 	}
@@ -108,6 +109,8 @@ func checkAdminOrElevate() error {
 }
 
 // Install installs a service on Windows using schtasks.
+// On non-admin execution, this triggers UAC elevation and exits the parent process.
+// The elevated child process will complete the installation.
 func (m *WindowsManager) Install(svc *service.Service) error {
 	if !isAdmin() {
 		if err := requestElevation(); err != nil {
@@ -116,6 +119,8 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 			}
 			return fmt.Errorf("failed to request elevation: %w\nHint: Try running the command as administrator manually", err)
 		}
+		// Elevation triggered successfully - parent process should exit
+		// The elevated child process will handle the actual installation
 		return nil
 	}
 
@@ -132,50 +137,33 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 
-	command := buildWindowsCommand(svc.Command, svc.Args)
+	normalizedName := normalizeServiceName(svc.Name)
+	logPath := filepath.Join(logDir, fmt.Sprintf("%s.log", normalizedName))
 
-	normalizedNameForLog := normalizeServiceName(svc.Name)
-	logPath := filepath.Join(logDir, fmt.Sprintf("%s.log", normalizedNameForLog))
-	escapedLogPath := escapeWindowsPath(logPath)
-	
-	hasInterval := svc.GetInterval() > 0
-	hasStartup := svc.OnStartup
-	isScheduled := hasInterval || hasStartup
-	
-	var commandWithLogs string
-	if isScheduled {
-		escapedCommand := strings.ReplaceAll(command, `\`, `\\`)
-		escapedCommand = strings.ReplaceAll(escapedCommand, `"`, `\"`)
-		escapedLogPathForPS := strings.ReplaceAll(logPath, `\`, `\\`)
-		escapedLogPathForPS = strings.ReplaceAll(escapedLogPathForPS, `"`, `\"`)
-		commandWithLogs = fmt.Sprintf(`powershell -NoProfile -ExecutionPolicy Bypass -Command "$proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', '%s >> %s 2>&1' -Verb RunAs -PassThru -Wait; exit $proc.ExitCode"`, escapedCommand, escapedLogPathForPS)
-	} else {
-		commandWithLogs = fmt.Sprintf(`cmd /c "%s >> %s 2>&1"`, command, escapedLogPath)
+	// Build the actual command to execute
+	command := buildWindowsCommand(svc.Command, svc.Args)
+	if svc.WorkDir != "" {
+		// Prefix with cd command if WorkDir is specified
+		command = fmt.Sprintf(`cd /d %s && %s`, escapeWindowsPath(svc.WorkDir), command)
 	}
 
-	normalizedName := normalizeServiceName(svc.Name)
+	// Create logging wrapper that adds timestamps
+	wrapperPath, err := createLoggingWrapper(normalizedName, command, logPath)
+	if err != nil {
+		return fmt.Errorf("failed to create logging wrapper: %w", err)
+	}
+
+	hasInterval := svc.GetInterval() > 0
+	hasStartup := svc.OnStartup
+
+	// Use PowerShell wrapper for timestamp logging
+	commandWithLogs := fmt.Sprintf(`powershell -NoProfile -ExecutionPolicy Bypass -File "%s"`, wrapperPath)
 
 	args := []string{
 		"/create",
 		"/tn", fmt.Sprintf("Nazim_%s", normalizedName),
 		"/tr", commandWithLogs,
 		"/f",
-	}
-
-	if svc.WorkDir != "" {
-		if isScheduled {
-			escapedWorkDir := strings.ReplaceAll(svc.WorkDir, `\`, `\\`)
-			escapedWorkDir = strings.ReplaceAll(escapedWorkDir, `"`, `\"`)
-			escapedCommand := strings.ReplaceAll(command, `\`, `\\`)
-			escapedCommand = strings.ReplaceAll(escapedCommand, `"`, `\"`)
-			escapedLogPathForPS := strings.ReplaceAll(logPath, `\`, `\\`)
-			escapedLogPathForPS = strings.ReplaceAll(escapedLogPathForPS, `"`, `\"`)
-			wrappedCommand := fmt.Sprintf(`powershell -NoProfile -ExecutionPolicy Bypass -Command "$proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'cd /d %s && %s >> %s 2>&1' -Verb RunAs -PassThru -Wait -WorkingDirectory '%s'; exit $proc.ExitCode"`, escapedWorkDir, escapedCommand, escapedLogPathForPS, escapedWorkDir)
-			args[3] = wrappedCommand
-		} else {
-			wrappedCommand := fmt.Sprintf(`cmd /c "cd /d %s && %s >> %s 2>&1"`, escapeWindowsPath(svc.WorkDir), command, escapedLogPath)
-			args[3] = wrappedCommand
-		}
 	}
 
 	if hasInterval {
@@ -229,73 +217,269 @@ func escapeWindowsPath(path string) string {
 	return `"` + escaped + `"`
 }
 
+// escapePowerShellLiteral escapes a string for use in PowerShell single-quoted (literal) strings.
+// Single-quoted strings in PowerShell are literal except for single quotes themselves.
+func escapePowerShellLiteral(s string) string {
+	// Escape single quotes by doubling them
+	escaped := strings.ReplaceAll(s, "'", "''")
+	return "'" + escaped + "'"
+}
+
+// marshalWindowsArgs properly marshals command-line arguments using Windows escaping rules.
+// This implements the CommandLineToArgvW escaping algorithm.
+func marshalWindowsArgs(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+
+	var quoted []string
+	for _, arg := range args {
+		quoted = append(quoted, quoteWindowsArg(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+// quoteWindowsArg quotes a single argument according to Windows CommandLineToArgvW rules.
+func quoteWindowsArg(arg string) string {
+	// Check if quoting is needed
+	if arg == "" {
+		return `""`
+	}
+
+	needsQuote := strings.ContainsAny(arg, " \t\"")
+	if !needsQuote {
+		return arg
+	}
+
+	// Build escaped argument
+	var result strings.Builder
+	result.WriteByte('"')
+
+	for i := 0; i < len(arg); i++ {
+		backslashes := 0
+
+		// Count consecutive backslashes
+		for i < len(arg) && arg[i] == '\\' {
+			backslashes++
+			i++
+		}
+
+		if i >= len(arg) {
+			// Backslashes at end - double them
+			for j := 0; j < backslashes*2; j++ {
+				result.WriteByte('\\')
+			}
+			break
+		} else if arg[i] == '"' {
+			// Backslashes before quote - double them + escape quote
+			for j := 0; j < backslashes*2+1; j++ {
+				result.WriteByte('\\')
+			}
+			result.WriteByte('"')
+		} else {
+			// Normal backslashes
+			for j := 0; j < backslashes; j++ {
+				result.WriteByte('\\')
+			}
+			result.WriteByte(arg[i])
+		}
+	}
+
+	result.WriteByte('"')
+	return result.String()
+}
+
+// createLoggingWrapper creates a PowerShell wrapper script that adds timestamps to logs.
+// Returns the wrapper path and an error if creation fails.
+func createLoggingWrapper(normalizedName, command, logPath string) (string, error) {
+	// Save wrapper script in dedicated wrappers directory
+	wrapperDir := filepath.Join(os.Getenv("APPDATA"), "nazim", "wrappers")
+	if err := os.MkdirAll(wrapperDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create wrappers directory: %w", err)
+	}
+
+	wrapperPath := filepath.Join(wrapperDir, fmt.Sprintf("%s-wrapper.ps1", normalizedName))
+
+	// Escape command for PowerShell (use single quotes for literal strings)
+	escapedCommand := strings.ReplaceAll(command, "'", "''")
+	escapedLogPath := strings.ReplaceAll(logPath, "'", "''")
+
+	// Create PowerShell wrapper with timestamp logging
+	wrapperContent := fmt.Sprintf(`# Nazim Logging Wrapper
+# Service: %s
+# Auto-generated - Do not edit manually
+
+$ErrorActionPreference = "Continue"
+
+function Get-Timestamp {
+    $local = Get-Date -Format "yyyy-MM-dd HH:mm:ss K"
+    $utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss")
+    return "[$local / $utc UTC]"
+}
+
+$logFile = '%s'
+
+# Ensure log directory exists
+$logDir = Split-Path -Parent $logFile
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+}
+
+# Log start
+$timestamp = Get-Timestamp
+Add-Content -Path $logFile -Value "$timestamp Starting execution"
+
+# Execute command and capture all output
+try {
+    $output = & cmd /c '%s' 2>&1
+    $exitCode = $LASTEXITCODE
+
+    # Log each line of output with timestamp
+    if ($output) {
+        $timestamp = Get-Timestamp
+        if ($output -is [array]) {
+            foreach ($line in $output) {
+                Add-Content -Path $logFile -Value "$timestamp $line"
+            }
+        } else {
+            Add-Content -Path $logFile -Value "$timestamp $output"
+        }
+    }
+} catch {
+    $timestamp = Get-Timestamp
+    Add-Content -Path $logFile -Value "$timestamp ERROR: $_"
+    $exitCode = 1
+}
+
+# Log finish
+$timestamp = Get-Timestamp
+Add-Content -Path $logFile -Value "$timestamp Finished with exit code $exitCode"
+Add-Content -Path $logFile -Value ""
+
+exit $exitCode
+`, normalizedName, escapedLogPath, escapedCommand)
+
+	if err := os.WriteFile(wrapperPath, []byte(wrapperContent), 0644); err != nil {
+		return "", fmt.Errorf("failed to write wrapper script: %w", err)
+	}
+
+	return wrapperPath, nil
+}
+
+// deleteLoggingWrapper removes the wrapper script for a service.
+func deleteLoggingWrapper(normalizedName string) {
+	wrapperPath := filepath.Join(os.Getenv("APPDATA"), "nazim", "wrappers", fmt.Sprintf("%s-wrapper.ps1", normalizedName))
+	_ = os.Remove(wrapperPath)
+}
+
 // Uninstall removes a service from Windows.
+// On non-admin execution, this triggers UAC elevation and returns a special error.
+// The CLI layer detects this error and exits silently, allowing the elevated process to complete.
 func (m *WindowsManager) Uninstall(name string) error {
 	normalizedName := normalizeServiceName(name)
 	taskName := fmt.Sprintf("Nazim_%s", normalizedName)
 
+	// Require admin upfront for task deletion
 	if !isAdmin() {
-		cmd := exec.Command("schtasks", "/delete", "/tn", taskName, "/f")
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			outputStr := strings.ToLower(string(output))
-			if strings.Contains(outputStr, "does not exist") ||
-				strings.Contains(outputStr, "cannot find") ||
-				strings.Contains(outputStr, "not found") {
-				return nil
-			}
-			if strings.Contains(outputStr, "access is denied") || strings.Contains(outputStr, "privileges") {
-				if err := checkAdminOrElevate(); err != nil {
-					return fmt.Errorf("administrator privileges required: %w", err)
-				}
-				return nil
-			}
-				return fmt.Errorf("failed to delete task: %s: %w", string(output), err)
+		if err := checkAdminOrElevate(); err != nil {
+			return fmt.Errorf("administrator privileges required: %w", err)
 		}
-		return nil
+		// Elevated process will handle deletion - return error to stop original process
+		return fmt.Errorf("Elevated process will handle deletion")
 	}
 
+	// We are admin - proceed with deletion
 	cmd := exec.Command("schtasks", "/delete", "/tn", taskName, "/f")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-			outputStr := strings.ToLower(string(output))
-			if strings.Contains(outputStr, "does not exist") ||
+		outputStr := strings.ToLower(string(output))
+		// Task doesn't exist = success
+		if strings.Contains(outputStr, "does not exist") ||
 			strings.Contains(outputStr, "cannot find") ||
-				strings.Contains(outputStr, "not found") {
-				return nil
-			}
-			return fmt.Errorf("failed to delete task: %s: %w", string(output), err)
+			strings.Contains(outputStr, "not found") {
+			// Still delete wrapper even if task doesn't exist
+			deleteLoggingWrapper(normalizedName)
+			return nil
+		}
+		return fmt.Errorf("failed to delete task: %s: %w", string(output), err)
+	}
+
+	// Delete the logging wrapper script
+	deleteLoggingWrapper(normalizedName)
+
+	return nil
+}
+
+// Enable enables a service on Windows (allows it to run on schedule).
+// On non-admin execution, this triggers UAC elevation and returns a special error.
+// The CLI layer detects this error and exits silently, allowing the elevated process to complete.
+func (m *WindowsManager) Enable(name string) error {
+	normalizedName := normalizeServiceName(name)
+	taskName := fmt.Sprintf("Nazim_%s", normalizedName)
+
+	// Require admin upfront for task modification
+	if !isAdmin() {
+		if err := checkAdminOrElevate(); err != nil {
+			return fmt.Errorf("administrator privileges required: %w", err)
+		}
+		// Elevated process will handle enabling - return error to stop original process
+		return fmt.Errorf("Elevated process will handle enable")
+	}
+
+	// Enable the task so it will run on schedule
+	cmd := exec.Command("schtasks", "/change", "/tn", taskName, "/enable")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to enable task: %s: %w", string(output), err)
 	}
 	return nil
 }
 
-// Start starts a service on Windows.
-func (m *WindowsManager) Start(name string) error {
+// Disable disables a service on Windows (prevents it from running on schedule).
+// On non-admin execution, this triggers UAC elevation and returns a special error.
+// The CLI layer detects this error and exits silently, allowing the elevated process to complete.
+func (m *WindowsManager) Disable(name string) error {
 	normalizedName := normalizeServiceName(name)
 	taskName := fmt.Sprintf("Nazim_%s", normalizedName)
 
+	// Require admin upfront for task modification
+	if !isAdmin() {
+		if err := checkAdminOrElevate(); err != nil {
+			return fmt.Errorf("administrator privileges required: %w", err)
+		}
+		// Elevated process will handle disabling - return error to stop original process
+		return fmt.Errorf("Elevated process will handle disable")
+	}
+
+	// Disable the task to stop future scheduled executions
+	cmd := exec.Command("schtasks", "/change", "/tn", taskName, "/disable")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to disable task: %s: %w", string(output), err)
+	}
+	return nil
+}
+
+// Run executes a service immediately (independent of schedule).
+// This triggers immediate execution regardless of the task's enabled/disabled state.
+func (m *WindowsManager) Run(name string) error {
+	normalizedName := normalizeServiceName(name)
+	taskName := fmt.Sprintf("Nazim_%s", normalizedName)
+
+	// /run doesn't require admin privileges on already-created tasks
+	// It just triggers execution using the existing task definition
 	cmd := exec.Command("schtasks", "/run", "/tn", taskName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to start task: %s: %w", string(output), err)
+		outputStr := strings.ToLower(string(output))
+		// Provide helpful error messages
+		if strings.Contains(outputStr, "does not exist") ||
+			strings.Contains(outputStr, "cannot find") {
+			return fmt.Errorf("task not found - service may not be installed")
+		}
+		return fmt.Errorf("failed to run task: %s: %w", string(output), err)
 	}
-	return nil
-}
 
-// Stop stops a service on Windows (terminates the running task).
-func (m *WindowsManager) Stop(name string) error {
-	normalizedName := normalizeServiceName(name)
-	taskName := fmt.Sprintf("Nazim_%s", normalizedName)
-
-	cmd := exec.Command("schtasks", "/end", "/tn", taskName)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-			outputStr := strings.ToLower(string(output))
-			if strings.Contains(outputStr, "is not running") {
-				return nil
-			}
-			return fmt.Errorf("failed to stop task: %s: %w", string(output), err)
-	}
 	return nil
 }
 
@@ -307,4 +491,32 @@ func (m *WindowsManager) IsInstalled(name string) (bool, error) {
 	cmd := exec.Command("schtasks", "/query", "/tn", taskName)
 	err := cmd.Run()
 	return err == nil, nil
+}
+
+// GetTaskState returns the state of a scheduled task ("Enabled" or "Disabled").
+// Returns error if task is not found.
+func (m *WindowsManager) GetTaskState(name string) (string, error) {
+	normalizedName := normalizeServiceName(name)
+	taskName := fmt.Sprintf("Nazim_%s", normalizedName)
+
+	cmd := exec.Command("schtasks", "/query", "/tn", taskName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		outputStr := strings.ToLower(string(output))
+		if strings.Contains(outputStr, "does not exist") ||
+			strings.Contains(outputStr, "cannot find") {
+			return "", fmt.Errorf("task not found")
+		}
+		return "", fmt.Errorf("failed to query task: %w", err)
+	}
+
+	outputStr := string(output)
+
+	// Check if task is disabled by looking for "Disabled" in the Status column
+	if strings.Contains(outputStr, "Disabled") {
+		return "Disabled", nil
+	}
+
+	// If not disabled and task exists, it's enabled (Ready, Running, etc.)
+	return "Enabled", nil
 }

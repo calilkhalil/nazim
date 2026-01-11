@@ -61,19 +61,46 @@ func getDefaultConfigDir() string {
 	case "windows":
 		appData := os.Getenv("APPDATA")
 		if appData == "" {
-			// Fallback to user home
-			home, _ := os.UserHomeDir()
+			// Fallback to user home - validate it exists
+			home, err := os.UserHomeDir()
+			if err != nil || home == "" {
+				// Last resort: current directory
+				if cwd, err := os.Getwd(); err == nil {
+					return cwd
+				}
+				// Absolute last resort
+				return "."
+			}
+			return home
+		}
+		// Validate APPDATA is not empty and looks like a valid path
+		if len(appData) < 3 || !filepath.IsAbs(appData) {
+			home, err := os.UserHomeDir()
+			if err != nil || home == "" {
+				return "."
+			}
 			return home
 		}
 		return appData
 	case "darwin", "linux":
 		home, err := os.UserHomeDir()
-		if err != nil {
-			return "/"
+		if err != nil || home == "" {
+			// Don't fall back to "/" - that's dangerous
+			// Use current directory instead
+			if cwd, err := os.Getwd(); err == nil {
+				return filepath.Join(cwd, ".config")
+			}
+			return ".config"
 		}
 		return filepath.Join(home, ".config")
 	default:
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			if cwd, err := os.Getwd(); err == nil {
+				return cwd
+			}
+			return "."
+		}
 		return home
 	}
 }
@@ -181,4 +208,9 @@ func (c *Config) GetConfigPath() string {
 // GetScriptsDir returns the directory where scripts are stored.
 func (c *Config) GetScriptsDir() string {
 	return filepath.Join(c.ConfigDir, "scripts")
+}
+
+// GetLogsDir returns the directory where service logs are stored.
+func (c *Config) GetLogsDir() string {
+	return filepath.Join(c.ConfigDir, "logs")
 }

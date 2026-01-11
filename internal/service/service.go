@@ -127,27 +127,51 @@ func (s *Service) Validate() error {
 
 // validateServiceName checks if a service name contains invalid characters.
 func validateServiceName(name string) error {
+	// Length check (filesystem compatibility and platform limits)
+	if len(name) == 0 {
+		return fmt.Errorf("service name cannot be empty")
+	}
+	if len(name) > 255 {
+		return fmt.Errorf("service name too long (max 255 characters, got %d)", len(name))
+	}
+
+	// Check for leading/trailing spaces
+	if strings.TrimSpace(name) != name {
+		return fmt.Errorf("service name cannot have leading or trailing spaces")
+	}
+
+	// Check for empty after trim
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("service name cannot be empty or only whitespace")
+	}
+
+	// Path traversal check - prevent ".." sequences
+	if strings.Contains(name, "..") {
+		return fmt.Errorf("service name cannot contain '..' (path traversal attempt)")
+	}
+
+	// Hidden file check - prevent names starting with "."
+	if strings.HasPrefix(name, ".") {
+		return fmt.Errorf("service name cannot start with '.' (hidden files)")
+	}
+
 	// Windows Task Scheduler doesn't allow: \ / : * ? " < > |
 	// systemd allows most characters but spaces and some special chars can cause issues
 	// launchd is more permissive but we'll be conservative
-	
 	invalidChars := []string{"\\", "/", ":", "*", "?", "\"", "<", ">", "|", "\n", "\r", "\t"}
 	for _, char := range invalidChars {
 		if strings.Contains(name, char) {
 			return fmt.Errorf("service name cannot contain '%s'", char)
 		}
 	}
-	
-	// Check for leading/trailing spaces
-	if strings.TrimSpace(name) != name {
-		return fmt.Errorf("service name cannot have leading or trailing spaces")
+
+	// Check for control characters
+	for _, r := range name {
+		if r < 32 || r == 127 {
+			return fmt.Errorf("service name cannot contain control characters")
+		}
 	}
-	
-	// Check for empty after trim
-	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("service name cannot be empty or only whitespace")
-	}
-	
+
 	return nil
 }
 

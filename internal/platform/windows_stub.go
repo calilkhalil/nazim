@@ -26,17 +26,27 @@ func (m *WindowsManager) Uninstall(name string) error {
 	panic("WindowsManager.Uninstall should not be called on non-Windows platforms")
 }
 
-// Start starts a service on Windows.
-func (m *WindowsManager) Start(name string) error {
-	panic("WindowsManager.Start should not be called on non-Windows platforms")
+// Enable enables a service on Windows.
+func (m *WindowsManager) Enable(name string) error {
+	panic("WindowsManager.Enable should not be called on non-Windows platforms")
 }
 
-// Stop stops a service on Windows.
-func (m *WindowsManager) Stop(name string) error {
-	panic("WindowsManager.Stop should not be called on non-Windows platforms")
+// Disable disables a service on Windows.
+func (m *WindowsManager) Disable(name string) error {
+	panic("WindowsManager.Disable should not be called on non-Windows platforms")
+}
+
+// Run executes a service immediately on Windows.
+func (m *WindowsManager) Run(name string) error {
+	panic("WindowsManager.Run should not be called on non-Windows platforms")
 }
 
 // IsInstalled checks if a service is installed.
 func (m *WindowsManager) IsInstalled(name string) (bool, error) {
 	panic("WindowsManager.IsInstalled should not be called on non-Windows platforms")
+}
+
+// GetTaskState returns the state of a scheduled task.
+func (m *WindowsManager) GetTaskState(name string) (string, error) {
+	panic("WindowsManager.GetTaskState should not be called on non-Windows platforms")
 }

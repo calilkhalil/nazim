@@ -12,8 +12,9 @@
 //	add       add a new service
 //	list      list all services
 //	remove    remove a service
-//	start     start a service
-//	stop      stop a service
+//	enable    enable a service
+//	disable   disable a service
+//	run       run a service immediately
 //
 // Flags:
 //
@@ -47,6 +48,13 @@ import (
 	"nazim/internal/config"
 )
 
+// Version information (set by build flags)
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
+)
+
 const (
 	exitOK    = 0
 	exitError = 1
@@ -76,6 +84,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	command := args[0]
 	remainingArgs := args[1:]
+
+	// Handle version flag
+	if command == "--version" || command == "version" {
+		fmt.Fprintf(stdout, "nazim version %s (commit: %s, built: %s)\n", version, commit, buildDate)
+		return exitOK
+	}
 
 	// Handle help flag
 	if command == "-h" || command == "--help" || command == "help" {
@@ -116,18 +130,16 @@ func handleCommand(ctx context.Context, command string, flags *Flags, cmdArgs []
 		return handleList(ctx, cliHandler, verbose, stderr)
 	case "remove":
 		return handleRemove(ctx, cmdArgs, cliHandler, verbose, stderr)
-	case "start":
-		return handleStart(ctx, cmdArgs, cliHandler, verbose, stderr)
-	case "stop":
-		return handleStop(ctx, cmdArgs, cliHandler, verbose, stderr)
-	case "status", "info":
-		return handleStatus(ctx, command, cmdArgs, cliHandler, verbose, stderr)
-	case "edit":
-		return handleEdit(ctx, cmdArgs, flags, cliHandler, verbose, stderr)
 	case "enable":
 		return handleEnable(ctx, cmdArgs, cliHandler, verbose, stderr)
 	case "disable":
 		return handleDisable(ctx, cmdArgs, cliHandler, verbose, stderr)
+	case "run":
+		return handleRun(ctx, cmdArgs, cliHandler, verbose, stderr)
+	case "status", "info":
+		return handleStatus(ctx, command, cmdArgs, cliHandler, verbose, stderr)
+	case "edit":
+		return handleEdit(ctx, cmdArgs, flags, cliHandler, verbose, stderr)
 	default:
 		fmt.Fprintf(stderr, "nazim: unknown command: %s\n", command)
 		printUsage(stderr)
@@ -172,26 +184,13 @@ func handleRemove(ctx context.Context, cmdArgs []string, cliHandler *cli.CLI, ve
 	return exitOK
 }
 
-func handleStart(ctx context.Context, cmdArgs []string, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
+func handleRun(ctx context.Context, cmdArgs []string, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
 	if len(cmdArgs) == 0 {
-		fmt.Fprintf(stderr, "nazim: start requires a service name\n")
+		fmt.Fprintf(stderr, "nazim: run requires a service name\n")
 		return exitError
 	}
 	serviceName := strings.Join(cmdArgs, " ")
-	if err := cliHandler.Start(ctx, serviceName, verbose); err != nil {
-		fmt.Fprintf(stderr, "nazim: %v\n", err)
-		return exitError
-	}
-	return exitOK
-}
-
-func handleStop(ctx context.Context, cmdArgs []string, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
-	if len(cmdArgs) == 0 {
-		fmt.Fprintf(stderr, "nazim: stop requires a service name\n")
-		return exitError
-	}
-	serviceName := strings.Join(cmdArgs, " ")
-	if err := cliHandler.Stop(ctx, serviceName, verbose); err != nil {
+	if err := cliHandler.Run(ctx, serviceName, verbose); err != nil {
 		fmt.Fprintf(stderr, "nazim: %v\n", err)
 		return exitError
 	}
@@ -212,11 +211,18 @@ func handleStatus(ctx context.Context, command string, cmdArgs []string, cliHand
 }
 
 func handleEdit(ctx context.Context, cmdArgs []string, flags *Flags, cliHandler *cli.CLI, verbose bool, stderr io.Writer) int {
-	if len(cmdArgs) == 0 {
-		fmt.Fprintf(stderr, "nazim: edit requires a service name\n")
+	var serviceName string
+
+	// Prefer --name flag if provided
+	if flags.Name != "" {
+		serviceName = flags.Name
+	} else if len(cmdArgs) > 0 {
+		serviceName = strings.Join(cmdArgs, " ")
+	} else {
+		fmt.Fprintf(stderr, "nazim: edit requires a service name (use --name or provide as argument)\n")
 		return exitError
 	}
-	serviceName := strings.Join(cmdArgs, " ")
+
 	editFlags := &cli.Flags{
 		Name:      flags.Name,
 		Command:   flags.Command,
@@ -291,24 +297,57 @@ func parseFlags(args []string) (*Flags, []string, error) {
 }
 
 func preprocessArgs(args []string, command string) []string {
+	// For edit command, reorder args to put flags before positional arguments
+	if command == "edit" {
+		return reorderArgsForEdit(args)
+	}
+
+	// For add command, handle multi-word values for specific flags
 	if command != "add" {
 		return args
 	}
+
+	// Known nazim flags that we should recognize
+	knownFlags := map[string]bool{
+		"--name": true, "-n": true,
+		"--command": true, "-c": true,
+		"--args": true, "-a": true,
+		"--workdir": true, "-w": true,
+		"--interval": true, "-i": true,
+		"--on-startup": true,
+		"--verbose": true, "-v": true,
+		"--help": true, "-h": true,
+	}
+
 	result := make([]string, 0, len(args))
 	i := 0
 	for i < len(args) {
-		if args[i] == "--name" || args[i] == "-n" {
-			result = append(result, args[i])
+		currentFlag := args[i]
+
+		// Flags that may contain complex values (with spaces or internal flags)
+		if currentFlag == "--name" || currentFlag == "-n" ||
+			currentFlag == "--command" || currentFlag == "-c" ||
+			currentFlag == "--args" || currentFlag == "-a" {
+
+			result = append(result, currentFlag)
 			i++
+
+			// Accumulate value parts until we hit a known nazim flag
 			if i < len(args) && !strings.HasPrefix(args[i], "-") {
-				var nameParts []string
-				nameParts = append(nameParts, args[i])
+				var valueParts []string
+				valueParts = append(valueParts, args[i])
 				i++
-				for i < len(args) && !strings.HasPrefix(args[i], "-") {
-					nameParts = append(nameParts, args[i])
+
+				// Continue accumulating until we find a known nazim flag
+				for i < len(args) {
+					if knownFlags[args[i]] {
+						break
+					}
+					valueParts = append(valueParts, args[i])
 					i++
 				}
-				result = append(result, strings.Join(nameParts, " "))
+
+				result = append(result, strings.Join(valueParts, " "))
 			}
 		} else {
 			result = append(result, args[i])
@@ -316,6 +355,23 @@ func preprocessArgs(args []string, command string) []string {
 		}
 	}
 	return result
+}
+
+// reorderArgsForEdit moves positional arguments (service name) to the end
+// so flags can be parsed correctly by Go's flag package
+func reorderArgsForEdit(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+
+	// If first arg is not a flag, move it to the end
+	if !strings.HasPrefix(args[0], "-") {
+		serviceName := args[0]
+		remaining := args[1:]
+		return append(remaining, serviceName)
+	}
+
+	return args
 }
 
 func printUsage(w io.Writer) {
@@ -329,10 +385,10 @@ Commands:
   status <name>     show detailed service information
   edit <name>       update an existing service
   remove <name>     remove a service
-  start <name>      start a service manually
-  stop <name>       stop a service
-  enable <name>     enable a service
-  disable <name>    disable a service
+  enable <name>     enable a service (allows scheduled execution)
+  disable <name>    disable a service (prevents scheduled execution)
+  run <name>        execute a service immediately
+  version           show version information
 
 Add Options:
   -n, --name <name>        service name (required)
@@ -344,8 +400,9 @@ Add Options:
   -i, --interval <dur>      execution interval (e.g., 5m, 1h, 30s)
 
 Global Options:
-  -v, --verbose     enable verbose output
-  -h, --help        show this help
+  -v, --verbose        enable verbose output
+  -h, --help           show this help
+      --version        show version information
 
 Environment:
   NAZIM_VERBOSE     set to "1" for verbose output
@@ -373,12 +430,6 @@ Examples:
   # Remove a service
   nazim remove backup
 
-  # Start a service manually
-  nazim start backup
-
-  # Stop a service
-  nazim stop backup
-
   # Show service status
   nazim status backup
 
@@ -388,6 +439,9 @@ Examples:
   # Enable/disable a service
   nazim enable backup
   nazim disable backup
+
+  # Run a service immediately
+  nazim run backup
 
 Interval Format:
   Use s (seconds), m (minutes), h (hours), or d (days)
