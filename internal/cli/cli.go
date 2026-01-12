@@ -854,29 +854,6 @@ func (c *CLI) openNotepadWithMonitoring(scriptPath string, verbose bool) (string
 	return scriptPath, nil
 }
 
-func closeNotepad(pid int) {
-	if runtime.GOOS != "windows" {
-		return
-	}
-
-	// Try graceful close first
-	cmd := exec.Command("taskkill", "/PID", fmt.Sprintf("%d", pid))
-	_ = cmd.Run()
-
-	// Wait for graceful close
-	time.Sleep(500 * time.Millisecond)
-
-	// Check if process still exists
-	checkCmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH")
-	output, _ := checkCmd.Output()
-
-	// If still running, force close
-	if strings.Contains(string(output), fmt.Sprintf("%d", pid)) {
-		forceCmd := exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
-		_ = forceCmd.Run()
-	}
-}
-
 // closeNotepadByTitle closes notepad by window title (more reliable than PID)
 func closeNotepadByTitle(scriptPath string) {
 	if runtime.GOOS != "windows" {
