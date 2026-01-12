@@ -36,8 +36,8 @@ flowchart LR
 - **Startup Services**: Run commands automatically on system boot
 - **Scheduled Execution**: Execute services at regular intervals (minutes, hours, days)
 - **Interactive Editor**: Use `--command write` to open your default editor and create scripts
-- **Service Management**: Edit, enable, disable, start, stop, and view service status
-- **Automatic Logging**: All service output is automatically logged to `~/.nazim/logs/` (or `%APPDATA%\nazim\logs\` on Windows)
+- **Service Management**: Edit, enable, disable, run, and view service status
+- **Automatic Logging**: All service output is automatically logged to `~/.config/nazim/logs/` (or `%APPDATA%\nazim\logs\` on Windows)
 - **Simple CLI**: Easy-to-use command-line interface
 - **XDG Compliant**: Follows XDG Base Directory Specification for config files
 - **Minimal Dependencies**: Uses Go standard library, YAML parser, and Windows API for UAC elevation
@@ -110,11 +110,13 @@ nazim list
 # Remove a service
 nazim remove backup
 
-# Start a service manually
-nazim start backup
+# Run a service immediately (independent of schedule)
+nazim run backup
 
-# Stop a service
-nazim stop backup
+# Show service status
+nazim status backup
+# Or use the alias
+nazim info backup
 ```
 
 ### Examples
@@ -178,11 +180,14 @@ nazim list
 
 # Show detailed information about a service
 nazim status backup
+# Or use the alias
+nazim info backup
 
 # Edit an existing service
 nazim edit backup --interval 2h          # Change to interval-only (disables startup)
 nazim edit backup --on-startup           # Change to startup-only (removes interval)
 nazim edit backup --command newscript.sh # Update command only
+nazim edit --name backup --interval 2h   # Using --name flag
 
 # Enable/disable services
 nazim enable backup
@@ -191,9 +196,11 @@ nazim disable backup
 # Remove a service (also uninstalls from system)
 nazim remove monitor
 
-# Start/stop services manually
-nazim start backup
-nazim stop backup
+# Run a service immediately (independent of schedule)
+nazim run backup
+
+# Show version information
+nazim version
 ```
 
 ## Commands
@@ -201,13 +208,13 @@ nazim stop backup
 ```
 nazim add <options>     add a new service
 nazim list              list all services
-nazim remove <name>     remove a service (from system and config)
-nazim start <name>      start a service manually
-nazim stop <name>       stop a running service
-nazim status <name>    show detailed service information
+nazim status <name>    show detailed service information (alias: info)
 nazim edit <name>       update an existing service
+nazim remove <name>     remove a service (from system and config)
 nazim enable <name>     enable a service
 nazim disable <name>    disable a service
+nazim run <name>        execute a service immediately (independent of schedule)
+nazim version           show version information
 ```
 
 ### Add Command Options
@@ -226,6 +233,7 @@ nazim disable <name>    disable a service
 
 ### Edit Command Options
 
+- `-n, --name <name>`        service name (can be provided as flag or positional argument)
 - `-c, --command <cmd>`      update the command
 - `-a, --args <args>`        update arguments
 - `-w, --workdir <dir>`      update working directory
@@ -237,11 +245,13 @@ nazim disable <name>    disable a service
 - If `--interval` is provided, the service will run at intervals (startup is disabled)
 - If neither is provided, the current startup/interval setting is preserved
 - Other fields (command, args, workdir) are only updated if explicitly provided
+- Service name can be specified with `--name` flag or as a positional argument: `nazim edit backup` or `nazim edit --name backup`
 
 ### Global Options
 
 - `-v, --verbose`            enable verbose output
 - `-h, --help`               show help
+- `--version`                show version information
 
 ## Interval Format
 
@@ -263,7 +273,7 @@ Scripts created via `--command write` are stored in:
 - **Windows**: `%APPDATA%\nazim\scripts\`
 
 Service logs are automatically stored in:
-- **Linux/macOS**: `~/.nazim/logs/`
+- **Linux/macOS**: `~/.config/nazim/logs/`
 - **Windows**: `%APPDATA%\nazim\logs\`
 
 Example configuration:
@@ -330,6 +340,7 @@ The editor priority:
 - Uses **Task Scheduler** (`schtasks`) for service management
 - Supports startup and scheduled execution
 - Services are prefixed with `Nazim_` in Task Scheduler
+- Automatic UAC elevation when needed for service installation/management
 
 ### Linux
 - Uses **systemd** (user services) exclusively
@@ -349,13 +360,13 @@ The editor priority:
    - Windows: Task Scheduler entry (with automatic log redirection)
    - Linux: systemd service/timer (with automatic log redirection)
    - macOS: launchd plist file (with automatic log redirection)
-3. **Logging**: All service output (stdout and stderr) is automatically redirected to log files in `~/.nazim/logs/` (or `%APPDATA%\nazim\logs\` on Windows)
-4. **Manage**: You can list, start, stop, edit, enable, disable, or remove services through the CLI
+3. **Logging**: All service output (stdout and stderr) is automatically redirected to log files in `~/.config/nazim/logs/` (or `%APPDATA%\nazim\logs\` on Windows)
+4. **Manage**: You can list, run, edit, enable, disable, or remove services through the CLI
 5. **Remove**: nazim uninstalls the service from the system, removes it from config, and deletes associated script files (if created via `write` command)
 
 ## Requirements
 
-- Go 1.21 or higher (for building from source)
+- Go 1.24.0 or higher (for building from source)
 - Administrator/root permissions (for installing system services)
 - Platform-specific tools:
   - Windows: `schtasks`
