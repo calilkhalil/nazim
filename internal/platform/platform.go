@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"strings"
 
-	"nazim/internal/service"
+	"github.com/calilkhalil/nazim/internal/service"
 )
 
 // getHomeDir safely retrieves the user's home directory with validation.

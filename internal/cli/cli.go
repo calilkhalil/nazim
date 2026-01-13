@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"nazim/internal/config"
-	"nazim/internal/platform"
-	"nazim/internal/service"
+	"github.com/calilkhalil/nazim/internal/config"
+	"github.com/calilkhalil/nazim/internal/platform"
+	"github.com/calilkhalil/nazim/internal/service"
 )
 
 // CLI handles command-line operations.
@@ -34,6 +34,7 @@ type Flags struct {
 	Args      string
 	WorkDir   string
 	OnStartup bool
+	OnLogon   bool
 	Interval  string
 }
 
@@ -75,6 +76,7 @@ func (c *CLI) Add(ctx context.Context, flags *Flags, verbose bool) error {
 		Args:      args,
 		WorkDir:   flags.WorkDir,
 		OnStartup: flags.OnStartup,
+		OnLogon:   flags.OnLogon,
 		Interval:  service.Duration{Duration: intervalDuration},
 		Enabled:   true,
 		Platform:  runtime.GOOS,
@@ -153,6 +155,12 @@ func (c *CLI) List(ctx context.Context, verbose bool) error {
 		svcType := ""
 		if svc.OnStartup {
 			svcType = "Startup"
+		}
+		if svc.OnLogon {
+			if svcType != "" {
+				svcType += " + "
+			}
+			svcType += "Logon"
 		}
 		if svc.GetInterval() > 0 {
 			if svcType != "" {
@@ -436,7 +444,7 @@ func (c *CLI) Status(ctx context.Context, name string, verbose bool) error {
 		fmt.Printf("Working Directory: %s\n", svc.WorkDir)
 	}
 	fmt.Printf("Platform: %s\n", svc.Platform)
-	
+
 	svcType := ""
 	if svc.OnStartup {
 		svcType = "Startup"
@@ -542,10 +550,9 @@ func (c *CLI) Edit(ctx context.Context, name string, flags *Flags, verbose bool)
 	return nil
 }
 
-
 func parseDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
-	
+
 	if s == "" {
 		return 0, fmt.Errorf("duration cannot be empty")
 	}

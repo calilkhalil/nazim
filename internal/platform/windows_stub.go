@@ -4,7 +4,7 @@
 // Package platform provides Windows-specific service management stubs for non-Windows builds.
 package platform
 
-import "nazim/internal/service"
+import "github.com/calilkhalil/nazim/internal/service"
 
 // WindowsManager manages services on Windows using Task Scheduler.
 // This is a stub for non-Windows builds.

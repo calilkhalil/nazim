@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"nazim/internal/service"
+	"github.com/calilkhalil/nazim/internal/service"
 )
 
 // DarwinManager manages services on macOS using launchd.
@@ -30,7 +30,12 @@ func escapeXML(s string) string {
 
 // Install installs a service on macOS using launchd.
 func (m *DarwinManager) Install(svc *service.Service) error {
-	launchAgentsDir := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents")
+	home, err := getHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	launchAgentsDir := filepath.Join(home, "Library", "LaunchAgents")
 	if err := os.MkdirAll(launchAgentsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create LaunchAgents directory: %w", err)
 	}
@@ -61,7 +66,8 @@ func (m *DarwinManager) Install(svc *service.Service) error {
 		content.WriteString(fmt.Sprintf("  <key>WorkingDirectory</key>\n  <string>%s</string>\n", escapedWorkDir))
 	}
 
-	if svc.OnStartup {
+	// Support both OnStartup and OnLogon (macOS LaunchAgents run at user login)
+	if svc.OnStartup || svc.OnLogon {
 		content.WriteString("  <key>RunAtLoad</key>\n  <true/>\n")
 	}
 
@@ -71,15 +77,15 @@ func (m *DarwinManager) Install(svc *service.Service) error {
 	}
 
 	normalizedNameForLog := normalizeServiceName(svc.Name)
+	logDir := filepath.Join(home, ".nazim", "logs")
 	content.WriteString("  <key>StandardOutPath</key>\n")
-	content.WriteString(fmt.Sprintf("  <string>%s</string>\n", filepath.Join(os.Getenv("HOME"), ".nazim", "logs", fmt.Sprintf("%s.out", normalizedNameForLog))))
+	content.WriteString(fmt.Sprintf("  <string>%s</string>\n", filepath.Join(logDir, fmt.Sprintf("%s.out", normalizedNameForLog))))
 	content.WriteString("  <key>StandardErrorPath</key>\n")
-	content.WriteString(fmt.Sprintf("  <string>%s</string>\n", filepath.Join(os.Getenv("HOME"), ".nazim", "logs", fmt.Sprintf("%s.err", normalizedNameForLog))))
+	content.WriteString(fmt.Sprintf("  <string>%s</string>\n", filepath.Join(logDir, fmt.Sprintf("%s.err", normalizedNameForLog))))
 
 	content.WriteString("</dict>\n")
 	content.WriteString("</plist>\n")
 
-	logDir := filepath.Join(os.Getenv("HOME"), ".nazim", "logs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
@@ -102,8 +108,13 @@ func (m *DarwinManager) Install(svc *service.Service) error {
 
 // Uninstall removes a service from macOS.
 func (m *DarwinManager) Uninstall(name string) error {
+	home, err := getHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+
 	normalizedName := normalizeServiceName(name)
-	plistFile := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
+	plistFile := filepath.Join(home, "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
 
 	_ = exec.Command("launchctl", "unload", plistFile).Run()
 
@@ -116,8 +127,13 @@ func (m *DarwinManager) Uninstall(name string) error {
 
 // Enable enables a service on macOS (loads the launchd agent).
 func (m *DarwinManager) Enable(name string) error {
+	home, err := getHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+
 	normalizedName := normalizeServiceName(name)
-	plistPath := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
 
 	cmd := exec.Command("launchctl", "load", plistPath)
 	output, err := cmd.CombinedOutput()
@@ -129,8 +145,13 @@ func (m *DarwinManager) Enable(name string) error {
 
 // Disable disables a service on macOS (unloads the launchd agent).
 func (m *DarwinManager) Disable(name string) error {
+	home, err := getHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+
 	normalizedName := normalizeServiceName(name)
-	plistPath := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
 
 	cmd := exec.Command("launchctl", "unload", plistPath)
 	output, err := cmd.CombinedOutput()
@@ -159,16 +180,26 @@ func (m *DarwinManager) Run(name string) error {
 
 // IsInstalled checks if a service is installed.
 func (m *DarwinManager) IsInstalled(name string) (bool, error) {
-	normalizedName := normalizeServiceName(name)
-	plistFile := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
+	home, err := getHomeDir()
+	if err != nil {
+		return false, fmt.Errorf("failed to get home directory: %w", err)
+	}
 
-	_, err := os.Stat(plistFile)
+	normalizedName := normalizeServiceName(name)
+	plistFile := filepath.Join(home, "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
+
+	_, err = os.Stat(plistFile)
 	return err == nil, nil
 }
 
 // GetTaskState returns the state of a launchd agent ("Enabled" or "Disabled").
 // Returns error if agent is not found.
 func (m *DarwinManager) GetTaskState(name string) (string, error) {
+	home, err := getHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+
 	normalizedName := normalizeServiceName(name)
 	label := fmt.Sprintf("com.nazim.%s", normalizedName)
 
@@ -185,7 +216,7 @@ func (m *DarwinManager) GetTaskState(name string) (string, error) {
 	}
 
 	// Check if plist file exists (installed but not loaded = disabled)
-	plistFile := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
+	plistFile := filepath.Join(home, "Library", "LaunchAgents", fmt.Sprintf("com.nazim.%s.plist", normalizedName))
 	if _, err := os.Stat(plistFile); err == nil {
 		return "Disabled", nil
 	}
