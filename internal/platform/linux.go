@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"nazim/internal/service"
+	"github.com/calilkhalil/nazim/internal/service"
 )
 
 // LinuxManager manages services on Linux using systemd.
@@ -105,7 +105,9 @@ WantedBy=timers.target
 		if err := exec.Command("systemctl", "--user", "start", fmt.Sprintf("nazim-%s.timer", normalizedName)).Run(); err != nil {
 			return fmt.Errorf("failed to start timer: %w", err)
 		}
-	} else if svc.OnStartup && svc.GetInterval() == 0 {
+	} else if (svc.OnStartup || svc.OnLogon) && svc.GetInterval() == 0 {
+		// Both OnStartup and OnLogon use default.target for user services
+		// User services are started when the user logs in (graphical or console session)
 		content.WriteString("[Install]\n")
 		content.WriteString("WantedBy=default.target\n")
 

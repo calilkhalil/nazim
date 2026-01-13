@@ -13,8 +13,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/calilkhalil/nazim/internal/service"
 	"golang.org/x/sys/windows"
-	"nazim/internal/service"
 )
 
 // WindowsManager manages services on Windows using Task Scheduler.
@@ -25,6 +25,28 @@ func NewWindowsManager() *WindowsManager {
 	return &WindowsManager{}
 }
 
+// getAppDataDir returns the APPDATA directory with proper fallback.
+func getAppDataDir() (string, error) {
+	appData := os.Getenv("APPDATA")
+	if appData != "" && filepath.IsAbs(appData) {
+		return appData, nil
+	}
+
+	// Fallback to USERPROFILE\AppData\Roaming
+	userProfile := os.Getenv("USERPROFILE")
+	if userProfile != "" && filepath.IsAbs(userProfile) {
+		return filepath.Join(userProfile, "AppData", "Roaming"), nil
+	}
+
+	// Fallback to os.UserHomeDir
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("APPDATA not set and cannot determine home directory: %w", err)
+	}
+
+	return filepath.Join(home, "AppData", "Roaming"), nil
+}
+
 func isAdmin() bool {
 	if runtime.GOOS != "windows" {
 		return false
@@ -32,7 +54,7 @@ func isAdmin() bool {
 
 	token := windows.GetCurrentProcessToken()
 	elevated := token.IsElevated()
-	
+
 	return elevated
 }
 
@@ -131,8 +153,14 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 		}
 	}
 
+	// Get APPDATA directory safely
+	appData, err := getAppDataDir()
+	if err != nil {
+		return fmt.Errorf("failed to get APPDATA directory: %w", err)
+	}
+
 	// Create log directory if it doesn't exist
-	logDir := filepath.Join(os.Getenv("APPDATA"), "nazim", "logs")
+	logDir := filepath.Join(appData, "nazim", "logs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
@@ -155,9 +183,11 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 
 	hasInterval := svc.GetInterval() > 0
 	hasStartup := svc.OnStartup
+	hasLogon := svc.OnLogon
 
 	// Use PowerShell wrapper for timestamp logging
-	commandWithLogs := fmt.Sprintf(`powershell -NoProfile -ExecutionPolicy Bypass -File "%s"`, wrapperPath)
+	// -WindowStyle Hidden prevents the black terminal window from appearing
+	commandWithLogs := fmt.Sprintf(`powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%s"`, wrapperPath)
 
 	args := []string{
 		"/create",
@@ -169,15 +199,26 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 	if hasInterval {
 		minutes := int(svc.GetInterval().Minutes())
 		if minutes > 0 {
-			if hasStartup {
+			if hasLogon {
+				// ONLOGON runs as current user (has access to HKCU)
+				args = append(args, "/sc", "onlogon")
+				args = append(args, "/ri", fmt.Sprintf("%d", minutes))
+			} else if hasStartup {
+				// ONSTART runs as SYSTEM (before user login)
 				args = append(args, "/sc", "onstart")
 				args = append(args, "/ri", fmt.Sprintf("%d", minutes))
+				args = append(args, "/ru", "SYSTEM")
 			} else {
 				args = append(args, "/sc", "minute", "/mo", fmt.Sprintf("%d", minutes))
 			}
 		}
+	} else if hasLogon {
+		// ONLOGON runs as current user (has access to HKCU)
+		args = append(args, "/sc", "onlogon")
 	} else if hasStartup {
+		// ONSTART runs as SYSTEM (before user login)
 		args = append(args, "/sc", "onstart")
+		args = append(args, "/ru", "SYSTEM")
 	}
 
 	cmd := exec.Command("schtasks", args...)
@@ -191,7 +232,7 @@ func (m *WindowsManager) Install(svc *service.Service) error {
 
 func buildWindowsCommand(cmd string, args []string) string {
 	escapedCmd := escapeWindowsCommand(cmd)
-	
+
 	if len(args) == 0 {
 		return escapedCmd
 	}
@@ -200,7 +241,7 @@ func buildWindowsCommand(cmd string, args []string) string {
 	for i, arg := range args {
 		escapedArgs[i] = escapeWindowsCommand(arg)
 	}
-	
+
 	return escapedCmd + " " + strings.Join(escapedArgs, " ")
 }
 
@@ -217,8 +258,18 @@ func escapeWindowsPath(path string) string {
 	return `"` + escaped + `"`
 }
 
+// escapePowerShellSingleQuoted escapes a string for use inside PowerShell single-quoted strings.
+// In PowerShell single-quoted strings, only single quotes need escaping (by doubling).
+// This is used for embedding values in wrapper scripts.
+func escapePowerShellSingleQuoted(s string) string {
+	// Single quotes are the only characters that need escaping in single-quoted strings
+	// They are escaped by doubling them
+	return strings.ReplaceAll(s, "'", "''")
+}
+
 // escapePowerShellLiteral escapes a string for use in PowerShell single-quoted (literal) strings.
 // Single-quoted strings in PowerShell are literal except for single quotes themselves.
+// Deprecated: Use escapePowerShellSingleQuoted instead.
 func escapePowerShellLiteral(s string) string {
 	// Escape single quotes by doubling them
 	escaped := strings.ReplaceAll(s, "'", "''")
@@ -292,17 +343,24 @@ func quoteWindowsArg(arg string) string {
 // createLoggingWrapper creates a PowerShell wrapper script that adds timestamps to logs.
 // Returns the wrapper path and an error if creation fails.
 func createLoggingWrapper(normalizedName, command, logPath string) (string, error) {
+	// Get APPDATA directory safely
+	appData, err := getAppDataDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get APPDATA directory: %w", err)
+	}
+
 	// Save wrapper script in dedicated wrappers directory
-	wrapperDir := filepath.Join(os.Getenv("APPDATA"), "nazim", "wrappers")
+	wrapperDir := filepath.Join(appData, "nazim", "wrappers")
 	if err := os.MkdirAll(wrapperDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create wrappers directory: %w", err)
 	}
 
 	wrapperPath := filepath.Join(wrapperDir, fmt.Sprintf("%s-wrapper.ps1", normalizedName))
 
-	// Escape command for PowerShell (use single quotes for literal strings)
-	escapedCommand := strings.ReplaceAll(command, "'", "''")
-	escapedLogPath := strings.ReplaceAll(logPath, "'", "''")
+	// Escape command for PowerShell single-quoted strings
+	// Must escape: single quotes, and prevent breaking out of the string
+	escapedCommand := escapePowerShellSingleQuoted(command)
+	escapedLogPath := escapePowerShellSingleQuoted(logPath)
 
 	// Create PowerShell wrapper with timestamp logging
 	wrapperContent := fmt.Sprintf(`# Nazim Logging Wrapper
@@ -368,7 +426,11 @@ exit $exitCode
 
 // deleteLoggingWrapper removes the wrapper script for a service.
 func deleteLoggingWrapper(normalizedName string) {
-	wrapperPath := filepath.Join(os.Getenv("APPDATA"), "nazim", "wrappers", fmt.Sprintf("%s-wrapper.ps1", normalizedName))
+	appData, err := getAppDataDir()
+	if err != nil {
+		return // Silently fail if we can't get APPDATA
+	}
+	wrapperPath := filepath.Join(appData, "nazim", "wrappers", fmt.Sprintf("%s-wrapper.ps1", normalizedName))
 	_ = os.Remove(wrapperPath)
 }
 

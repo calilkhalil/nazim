@@ -44,8 +44,8 @@ import (
 	"strings"
 	"syscall"
 
-	"nazim/internal/cli"
-	"nazim/internal/config"
+	"github.com/calilkhalil/nazim/internal/cli"
+	"github.com/calilkhalil/nazim/internal/config"
 )
 
 // Version information (set by build flags)
@@ -69,6 +69,7 @@ type Flags struct {
 	Args      string
 	WorkDir   string
 	OnStartup bool
+	OnLogon   bool
 	Interval  string
 }
 
@@ -154,6 +155,7 @@ func handleAdd(ctx context.Context, flags *Flags, cliHandler *cli.CLI, verbose b
 		Args:      flags.Args,
 		WorkDir:   flags.WorkDir,
 		OnStartup: flags.OnStartup,
+		OnLogon:   flags.OnLogon,
 		Interval:  flags.Interval,
 	}
 	if err := cliHandler.Add(ctx, addFlags, verbose); err != nil {
@@ -229,6 +231,7 @@ func handleEdit(ctx context.Context, cmdArgs []string, flags *Flags, cliHandler 
 		Args:      flags.Args,
 		WorkDir:   flags.WorkDir,
 		OnStartup: flags.OnStartup,
+		OnLogon:   flags.OnLogon,
 		Interval:  flags.Interval,
 	}
 	if err := cliHandler.Edit(ctx, serviceName, editFlags, verbose); err != nil {
@@ -280,6 +283,7 @@ func parseFlags(args []string) (*Flags, []string, error) {
 	fs.StringVar(&flags.WorkDir, "workdir", "", "")
 	fs.StringVar(&flags.WorkDir, "w", "", "")
 	fs.BoolVar(&flags.OnStartup, "on-startup", false, "")
+	fs.BoolVar(&flags.OnLogon, "on-logon", false, "")
 	fs.StringVar(&flags.Interval, "interval", "", "")
 	fs.StringVar(&flags.Interval, "i", "", "")
 
@@ -315,7 +319,8 @@ func preprocessArgs(args []string, command string) []string {
 		"--workdir": true, "-w": true,
 		"--interval": true, "-i": true,
 		"--on-startup": true,
-		"--verbose": true, "-v": true,
+		"--on-logon":   true,
+		"--verbose":    true, "-v": true,
 		"--help": true, "-h": true,
 	}
 
@@ -396,7 +401,8 @@ Add Options:
                            use "write" or "edit" to open editor interactively
   -a, --args <args>        arguments for the command
   -w, --workdir <dir>      working directory
-      --on-startup         run on system startup
+      --on-startup         run at system boot (as SYSTEM, no user context)
+      --on-logon           run at user logon (as current user, has HKCU access)
   -i, --interval <dur>      execution interval (e.g., 5m, 1h, 30s)
 
 Global Options:

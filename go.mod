@@ -1,4 +1,4 @@
-module nazim
+module github.com/calilkhalil/nazim
 
 go 1.24.0
 

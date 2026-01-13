@@ -8,7 +8,7 @@ import (
 	"runtime"
 
 	"gopkg.in/yaml.v3"
-	"nazim/internal/service"
+	"github.com/calilkhalil/nazim/internal/service"
 )
 
 const (
