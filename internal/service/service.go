@@ -51,7 +51,7 @@ func formatDuration(d time.Duration) string {
 
 func parseDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
-	
+
 	if s == "" {
 		return 0, fmt.Errorf("duration cannot be empty")
 	}
@@ -78,7 +78,7 @@ func parseDuration(s string) (time.Duration, error) {
 	if _, err := fmt.Sscanf(s, "%d", &value); err != nil {
 		return 0, fmt.Errorf("invalid duration value: %w", err)
 	}
-	
+
 	// Validate value is positive
 	if value <= 0 {
 		return 0, fmt.Errorf("duration value must be positive, got %d", value)
@@ -93,7 +93,8 @@ type Service struct {
 	Command   string   `yaml:"command"`
 	Args      []string `yaml:"args,omitempty"`
 	WorkDir   string   `yaml:"workdir,omitempty"`
-	OnStartup bool     `yaml:"on_startup,omitempty"`
+	OnStartup bool     `yaml:"on_startup,omitempty"` // Runs at system boot (as SYSTEM)
+	OnLogon   bool     `yaml:"on_logon,omitempty"`   // Runs at user logon (as current user)
 	Interval  Duration `yaml:"interval,omitempty"`
 	Enabled   bool     `yaml:"enabled"`
 	Platform  string   `yaml:"platform,omitempty"` // windows, linux, darwin
@@ -104,24 +105,29 @@ func (s *Service) Validate() error {
 	if s.Name == "" {
 		return fmt.Errorf("service name is required")
 	}
-	
+
 	// Validate service name - check for invalid characters
 	if err := validateServiceName(s.Name); err != nil {
 		return fmt.Errorf("invalid service name: %w", err)
 	}
-	
+
 	if s.Command == "" {
 		return fmt.Errorf("service command is required")
 	}
-	if !s.OnStartup && s.Interval.Duration == 0 {
-		return fmt.Errorf("service must have either on_startup=true or an interval")
+	if !s.OnStartup && !s.OnLogon && s.Interval.Duration == 0 {
+		return fmt.Errorf("service must have either on_startup=true, on_logon=true, or an interval")
 	}
-	
+
 	// Validate interval is not negative
 	if s.Interval.Duration < 0 {
 		return fmt.Errorf("interval cannot be negative")
 	}
-	
+
+	// Validate minimum interval (Windows Task Scheduler requires at least 1 minute)
+	if s.Interval.Duration > 0 && s.Interval.Duration < time.Minute {
+		return fmt.Errorf("interval must be at least 1 minute, got %s", s.Interval.Duration)
+	}
+
 	return nil
 }
 
@@ -143,6 +149,11 @@ func validateServiceName(name string) error {
 	// Check for empty after trim
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("service name cannot be empty or only whitespace")
+	}
+
+	// Block names that consist only of dots (path traversal risk)
+	if strings.Trim(name, ".") == "" {
+		return fmt.Errorf("service name cannot consist only of dots")
 	}
 
 	// Path traversal check - prevent ".." sequences
